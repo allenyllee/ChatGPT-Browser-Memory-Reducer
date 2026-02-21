@@ -1,9 +1,11 @@
 // ==UserScript==
 // @name         ChatGPT Memory Reducer (Expandable + IndexedDB)
 // @namespace    local.chatgpt.memory.reducer
-// @version      0.5.5
+// @version      0.5.6
 // @description  Compress old ChatGPT messages to reduce lag, with expandable restore from IndexedDB.
 // @author       allenyllee
+// @downloadURL  https://gist.github.com/b1e7051e064b4ad8084efa16edc4fbf8/raw/chatgpt-memory-reducer.user.js
+// @updateURL    https://gist.github.com/b1e7051e064b4ad8084efa16edc4fbf8/raw/chatgpt-memory-reducer.user.js
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
 // @run-at       document-idle
