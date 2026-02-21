@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Browser Memory Reducer (Expandable + IndexedDB)
 // @namespace    local.chatgpt.browser.memory.reducer
-// @version      0.6.0
+// @version      0.6.1
 // @description  Compress old ChatGPT messages to reduce browser memory usage and lag, with expandable restore from IndexedDB.
 // @author       allenyllee
 // @downloadURL  https://gist.github.com/b1e7051e064b4ad8084efa16edc4fbf8/raw/chatgpt-browser-memory-reducer.user.js
@@ -34,7 +34,9 @@
   const BOOKMARK_SELECT_ID = "mr-bookmark-select";
   const BOOKMARK_INPUT_ID = "mr-bookmark-input";
   const BOOKMARK_PANEL_MIN_BOTTOM = 56;
+  const INDEX_TOOLS_ATTR = "data-mr-index-tools";
   const INDEX_BADGE_ATTR = "data-mr-index-badge";
+  const INDEX_ADD_ATTR = "data-mr-index-add";
   const INDEX_VALUE_ATTR = "data-mr-index-value";
   const EXPANDED_CLASS = "mr-expanded-host";
   const EXPANDED_LOCK_ATTR = "data-mr-expanded-lock";
@@ -166,13 +168,28 @@
 
   function ensureStickyIndexBadge(host, label) {
     if (!host) return;
-    let badge = host.querySelector(`:scope > [${INDEX_BADGE_ATTR}="1"]`);
+    let tools = host.querySelector(`:scope > [${INDEX_TOOLS_ATTR}="1"]`);
+    if (!tools) {
+      tools = document.createElement("div");
+      tools.setAttribute(INDEX_TOOLS_ATTR, "1");
+      host.prepend(tools);
+    }
+    let badge = tools.querySelector(`[${INDEX_BADGE_ATTR}="1"]`);
+    let addBtn = tools.querySelector(`[${INDEX_ADD_ATTR}="1"]`);
     const indexValue = indexFromLabel(label) || resolveMessagePosition(host).messageIndex;
     const bookmarked = Number.isInteger(indexValue) && bookmarks.includes(indexValue);
     if (!badge) {
       badge = document.createElement("div");
       badge.setAttribute(INDEX_BADGE_ATTR, "1");
-      host.prepend(badge);
+      tools.appendChild(badge);
+    }
+    if (!addBtn) {
+      addBtn = document.createElement("button");
+      addBtn.type = "button";
+      addBtn.setAttribute(INDEX_ADD_ATTR, "1");
+      addBtn.textContent = "+";
+      addBtn.setAttribute("title", "加入書籤");
+      tools.appendChild(addBtn);
     }
     const viewLabel = bookmarked ? `${label} ★` : label;
     badge.setAttribute(
@@ -183,12 +200,15 @@
     );
     if (Number.isInteger(indexValue)) {
       badge.setAttribute(INDEX_VALUE_ATTR, String(indexValue));
+      addBtn.setAttribute(INDEX_VALUE_ATTR, String(indexValue));
     } else {
       badge.removeAttribute(INDEX_VALUE_ATTR);
+      addBtn.removeAttribute(INDEX_VALUE_ATTR);
     }
     if (badge.textContent !== viewLabel) {
       badge.textContent = viewLabel;
     }
+    addBtn.disabled = bookmarked;
   }
 
   function getBookmarkStorageKey() {
@@ -295,7 +315,6 @@
         <input id="${BOOKMARK_INPUT_ID}" type="number" min="1" step="1" placeholder="編號">
         <button type="button" data-mr-action="bookmark-add">加入</button>
         <select id="${BOOKMARK_SELECT_ID}"></select>
-        <button type="button" data-mr-action="bookmark-jump">跳轉</button>
         <button type="button" data-mr-action="bookmark-remove">刪除</button>
       `;
       document.body.appendChild(panel);
@@ -331,7 +350,7 @@
 
   function getMessageSnapshot(el) {
     const clone = el.cloneNode(true);
-    clone.querySelectorAll("[data-mr-control], [data-mr-index-badge]").forEach((n) => n.remove());
+    clone.querySelectorAll("[data-mr-control], [data-mr-index-tools], [data-mr-index-badge]").forEach((n) => n.remove());
     return {
       html: clone.innerHTML,
       text: clone.textContent || "",
@@ -477,15 +496,22 @@
         position: relative;
         overflow: visible;
       }
-      [data-mr-index-badge="1"] {
+      [data-mr-index-tools="1"] {
         position: sticky;
         top: 56px;
-        display: block;
+        display: flex;
         width: fit-content;
         margin-left: auto;
         margin-right: 10px;
         margin-top: 4px;
         margin-bottom: 6px;
+        gap: 4px;
+        pointer-events: none;
+        z-index: 4;
+      }
+      [data-mr-index-badge="1"] {
+        display: block;
+        width: fit-content;
         padding: 4px 8px;
         border-radius: 999px;
         font-size: 11px;
@@ -498,7 +524,24 @@
         pointer-events: auto;
         cursor: pointer;
         user-select: none;
-        z-index: 4;
+      }
+      [data-mr-index-add="1"] {
+        pointer-events: auto;
+        width: 22px;
+        min-width: 22px;
+        height: 22px;
+        border-radius: 999px;
+        border: 1px solid rgba(148, 163, 184, 0.45);
+        background: rgba(255, 255, 255, 0.9);
+        color: rgba(82, 82, 82, 0.95);
+        cursor: pointer;
+        font-size: 14px;
+        line-height: 1;
+        padding: 0;
+      }
+      [data-mr-index-add="1"]:disabled {
+        cursor: default;
+        opacity: .6;
       }
       @media (max-width: 900px) {
         #${BOOKMARK_PANEL_ID} {
@@ -508,9 +551,11 @@
           overflow-x: auto;
           justify-content: flex-start;
         }
-        [data-mr-index-badge="1"] {
+        [data-mr-index-tools="1"] {
           top: 52px;
           margin-right: 8px;
+        }
+        [data-mr-index-badge="1"] {
           padding: 3px 7px;
           font-size: 10px;
         }
@@ -830,20 +875,6 @@
         if (input) input.value = "";
         return;
       }
-      if (action === "bookmark-jump") {
-        const select = document.getElementById(BOOKMARK_SELECT_ID);
-        const index = Number(select && select.value);
-        if (!Number.isInteger(index) || index <= 0) {
-          showStatus("請先選擇書籤", "done");
-          return;
-        }
-        if (jumpToMessageIndex(index)) {
-          showStatus(`已跳轉到 #${index}`, "done");
-        } else {
-          showStatus(`找不到 #${index}`, "done");
-        }
-        return;
-      }
       if (action === "bookmark-remove") {
         const select = document.getElementById(BOOKMARK_SELECT_ID);
         const index = Number(select && select.value);
@@ -856,6 +887,20 @@
         } else {
           showStatus(`書籤 #${index} 不存在`, "done");
         }
+      }
+      return;
+    }
+
+    const indexAddBtn = e.target.closest(`[${INDEX_ADD_ATTR}="1"]`);
+    if (indexAddBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const badgeIndex = Number(indexAddBtn.getAttribute(INDEX_VALUE_ATTR));
+      if (!Number.isInteger(badgeIndex) || badgeIndex <= 0) return;
+      if (addBookmark(badgeIndex)) {
+        showStatus(`已加入書籤 #${badgeIndex}`, "done");
+      } else {
+        showStatus(`書籤 #${badgeIndex} 已存在`, "done");
       }
       return;
     }
@@ -928,6 +973,18 @@
         btn.disabled = false;
         btn.textContent = prevLabel || "展開";
       }
+    }
+  });
+
+  document.addEventListener("change", (e) => {
+    const select = e.target.closest(`#${BOOKMARK_SELECT_ID}`);
+    if (!select) return;
+    const index = Number(select.value);
+    if (!Number.isInteger(index) || index <= 0) return;
+    if (jumpToMessageIndex(index)) {
+      showStatus(`已跳轉到 #${index}`, "done");
+    } else {
+      showStatus(`找不到 #${index}`, "done");
     }
   });
 
