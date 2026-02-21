@@ -48,6 +48,7 @@
   let dbPromise = null;
   let compactScheduled = null;
   let compactInFlight = false;
+  let fullIndexSyncScheduled = null;
   let flushScheduled = null;
   let startupDone = false;
   let routeKey = `${location.pathname}${location.search}`;
@@ -749,13 +750,14 @@
 
   function checkRouteChange() {
     const nextKey = `${location.pathname}${location.search}`;
-    if (nextKey === routeKey) return;
+    if (nextKey === routeKey) return false;
     routeKey = nextKey;
     bookmarks = loadBookmarks();
     rerenderBookmarkSelect();
     startupDone = false;
     showStatus("收合中", "working");
     scheduleCompact(30);
+    return true;
   }
 
   function runCompact() {
@@ -818,6 +820,65 @@
     for (const msg of msgs) {
       ensureInlineCollapseButton(msg);
     }
+  }
+
+  function scheduleFullIndexSync(delayMs = 300) {
+    clearTimeout(fullIndexSyncScheduled);
+    fullIndexSyncScheduled = setTimeout(() => {
+      fullIndexSyncScheduled = null;
+      syncAllMessageIndexLabels();
+    }, delayMs);
+  }
+
+  function collectMessageHostsFromNode(node, out) {
+    if (!node || node.nodeType !== Node.ELEMENT_NODE) return;
+    const el = /** @type {Element} */ (node);
+    if (el.matches && el.matches("[data-message-author-role]")) {
+      out.add(el);
+    }
+    if (!el.querySelectorAll) return;
+    const nested = el.querySelectorAll("[data-message-author-role]");
+    for (const msg of nested) {
+      out.add(msg);
+    }
+  }
+
+  function processAddedMessageHosts(records) {
+    const hosts = new Set();
+    for (const record of records) {
+      if (!record || !record.addedNodes || !record.addedNodes.length) continue;
+      for (const node of record.addedNodes) {
+        collectMessageHostsFromNode(node, hosts);
+      }
+    }
+    if (!hosts.size) return;
+    for (const host of hosts) {
+      if (!host.dataset.mrIndexLabel) {
+        const pos = resolveMessagePosition(host);
+        host.dataset.mrIndexLabel = indexLabelOf(pos.messageIndex, pos.totalMessages);
+      }
+      ensureStickyIndexBadge(host, host.dataset.mrIndexLabel || "?");
+      ensureInlineCollapseButton(host);
+    }
+  }
+
+  function hasMessageMutation(records) {
+    for (const record of records) {
+      if (!record) continue;
+      for (const node of record.addedNodes || []) {
+        if (node.nodeType !== Node.ELEMENT_NODE) continue;
+        const el = /** @type {Element} */ (node);
+        if (el.matches && el.matches("[data-message-author-role]")) return true;
+        if (el.querySelector && el.querySelector("[data-message-author-role]")) return true;
+      }
+      for (const node of record.removedNodes || []) {
+        if (node.nodeType !== Node.ELEMENT_NODE) continue;
+        const el = /** @type {Element} */ (node);
+        if (el.matches && el.matches("[data-message-author-role]")) return true;
+        if (el.querySelector && el.querySelector("[data-message-author-role]")) return true;
+      }
+    }
+    return false;
   }
 
   function renderExpandedMessage(host, row, id) {
@@ -988,12 +1049,15 @@
     }
   });
 
-  const observer = new MutationObserver(() => {
-    checkRouteChange();
-    syncAllMessageIndexLabels();
-    ensureButtonsForExpandedMessages();
+  const observer = new MutationObserver((records) => {
+    const routeChanged = checkRouteChange();
+    const messageMutated = hasMessageMutation(records);
+    processAddedMessageHosts(records);
+    scheduleFullIndexSync();
     updateBookmarkPanelPosition();
-    scheduleCompact();
+    if (routeChanged || messageMutated) {
+      scheduleCompact();
+    }
   });
 
   ensureStyles();
@@ -1008,7 +1072,9 @@
   setInterval(() => {
     checkRouteChange();
     updateBookmarkPanelPosition();
-    runCompact();
+    if (!startupDone) {
+      runCompact();
+    }
   }, PERIODIC_COMPACT_MS);
   window.addEventListener("resize", updateBookmarkPanelPosition);
   setInterval(() => {
