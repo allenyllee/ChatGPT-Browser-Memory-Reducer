@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Memory Reducer (Expandable + IndexedDB)
 // @namespace    local.chatgpt.memory.reducer
-// @version      0.5.6
+// @version      0.5.8
 // @description  Compress old ChatGPT messages to reduce lag, with expandable restore from IndexedDB.
 // @author       allenyllee
 // @downloadURL  https://gist.github.com/b1e7051e064b4ad8084efa16edc4fbf8/raw/chatgpt-memory-reducer.user.js
@@ -118,6 +118,13 @@
     `;
   }
 
+  function indexLabelOf(messageIndex, totalMessages) {
+    if (Number.isInteger(messageIndex) && Number.isInteger(totalMessages)) {
+      return `${messageIndex}/${totalMessages}`;
+    }
+    return "?";
+  }
+
   function resolveMessagePosition(host, fallbackIndex, fallbackTotal) {
     if (Number.isInteger(fallbackIndex) && Number.isInteger(fallbackTotal)) {
       return { messageIndex: fallbackIndex, totalMessages: fallbackTotal };
@@ -128,6 +135,14 @@
       return { messageIndex: idx + 1, totalMessages: msgs.length };
     }
     return { messageIndex: fallbackIndex, totalMessages: fallbackTotal };
+  }
+
+  function syncAllMessageIndexLabels() {
+    const msgs = Array.from(document.querySelectorAll('[data-message-author-role]'));
+    const total = msgs.length;
+    for (let i = 0; i < total; i += 1) {
+      msgs[i].dataset.mrIndexLabel = indexLabelOf(i + 1, total);
+    }
   }
 
   function ensureInlineCollapseButton(host) {
@@ -224,6 +239,30 @@
         color: #065f46;
         border: 1px solid rgba(16, 185, 129, .55);
         background: rgba(209, 250, 229, .95);
+      }
+      [data-message-author-role][data-mr-index-label] {
+        position: relative;
+        overflow: visible;
+      }
+      [data-message-author-role][data-mr-index-label]::before {
+        content: attr(data-mr-index-label);
+        position: absolute;
+        left: -62px;
+        top: 10px;
+        min-width: 46px;
+        text-align: right;
+        font-size: 11px;
+        line-height: 1;
+        color: rgba(120, 120, 120, 0.95);
+        font-variant-numeric: tabular-nums;
+        pointer-events: none;
+      }
+      @media (max-width: 900px) {
+        [data-message-author-role][data-mr-index-label]::before {
+          left: -48px;
+          min-width: 36px;
+          font-size: 10px;
+        }
       }
     `;
     document.head.appendChild(style);
@@ -392,6 +431,7 @@
     };
 
     el.dataset.mrId = id;
+    el.dataset.mrIndexLabel = indexLabelOf(row.messageIndex, row.totalMessages);
     el.setAttribute(FLAG, "1");
     el.innerHTML = compactUI(role, preview, id, row.messageIndex, row.totalMessages);
 
@@ -448,6 +488,7 @@
     if (pending > 0 && !startupDone) {
       showStatus("收合中", "working");
     }
+    syncAllMessageIndexLabels();
     maybeCompleteStartupStatus();
   }
 
@@ -489,6 +530,7 @@
       if (!row) return;
       putHotCache(row);
       const pos = resolveMessagePosition(host, row.messageIndex, row.totalMessages);
+      host.dataset.mrIndexLabel = indexLabelOf(pos.messageIndex, pos.totalMessages);
       host.setAttribute(FLAG, "1");
       host.innerHTML = compactUI(row.role, row.preview, existingId, pos.messageIndex, pos.totalMessages);
       focusMessageTop(host);
@@ -541,7 +583,9 @@
         ensureInlineCollapseButton(host);
       } else {
         const pos = resolveMessagePosition(host, row.messageIndex, row.totalMessages);
+        host.dataset.mrIndexLabel = indexLabelOf(pos.messageIndex, pos.totalMessages);
         host.innerHTML = compactUI(row.role, row.preview, id, pos.messageIndex, pos.totalMessages);
+        host.setAttribute(FLAG, "1");
         focusMessageTop(host);
       }
     } catch (err) {
@@ -556,12 +600,14 @@
 
   const observer = new MutationObserver(() => {
     checkRouteChange();
+    syncAllMessageIndexLabels();
     ensureButtonsForExpandedMessages();
     scheduleCompact();
   });
 
   ensureStyles();
   showStatus("收合中", "working");
+  syncAllMessageIndexLabels();
   ensureButtonsForExpandedMessages();
   runCompact();
   observer.observe(document.body, { childList: true, subtree: true });
