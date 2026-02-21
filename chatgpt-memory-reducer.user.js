@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Memory Reducer (Expandable + IndexedDB)
 // @namespace    local.chatgpt.memory.reducer
-// @version      0.5.2
+// @version      0.5.3
 // @description  Compress old ChatGPT messages to reduce lag, with expandable restore from IndexedDB.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -25,7 +25,10 @@
   const FLAG = "data-mr-compacted";
   const STYLE_ID = "mr-style";
   const FLASH_CLASS = "mr-focus-flash";
-  const FLASH_ANIM_MS = 1200;
+  const FLASH_ANIM_MS = 1800;
+  const SCROLL_BASE_MS = 350;
+  const SCROLL_MS_PER_PX = 0.35;
+  const SCROLL_MAX_MS = 1800;
 
   let seq = 1;
   let dbPromise = null;
@@ -189,15 +192,58 @@
     }, FLASH_ANIM_MS + 80);
   }
 
+  function estimateScrollDurationMs(fromY, toY) {
+    const distance = Math.abs(toY - fromY);
+    const estimated = SCROLL_BASE_MS + distance * SCROLL_MS_PER_PX;
+    return Math.min(SCROLL_MAX_MS, Math.max(SCROLL_BASE_MS, estimated));
+  }
+
+  function getScrollContainer(el) {
+    let cur = el ? el.parentElement : null;
+    while (cur && cur !== document.body) {
+      const style = window.getComputedStyle(cur);
+      const overflowY = style.overflowY || "";
+      const scrollable = (overflowY === "auto" || overflowY === "scroll") && cur.scrollHeight > cur.clientHeight + 1;
+      if (scrollable) return cur;
+      cur = cur.parentElement;
+    }
+    return document.scrollingElement || document.documentElement;
+  }
+
+  function getContainerScrollTop(container) {
+    if (container === document.scrollingElement || container === document.documentElement || container === document.body) {
+      return window.scrollY || window.pageYOffset || 0;
+    }
+    return container.scrollTop;
+  }
+
+  function scrollContainerTo(container, top, behavior) {
+    if (container === document.scrollingElement || container === document.documentElement || container === document.body) {
+      window.scrollTo({ top, behavior });
+      return;
+    }
+    container.scrollTo({ top, behavior });
+  }
+
   function focusMessageTop(host) {
     if (!host) return;
-    requestAnimationFrame(() => {
-      host.scrollIntoView({ behavior: "smooth", block: "start", inline: "nearest" });
-      requestAnimationFrame(() => {
-        window.scrollBy({ top: -COLLAPSE_SCROLL_TOP_OFFSET, left: 0, behavior: "auto" });
-        flashMessage(host);
-      });
-    });
+    const container = getScrollContainer(host);
+    const startTop = getContainerScrollTop(container);
+    const hostRect = host.getBoundingClientRect();
+    const containerTop = container === document.scrollingElement || container === document.documentElement || container === document.body
+      ? 0
+      : container.getBoundingClientRect().top;
+    const rawTarget = startTop + (hostRect.top - containerTop) - COLLAPSE_SCROLL_TOP_OFFSET;
+    const maxTop = container === document.scrollingElement || container === document.documentElement || container === document.body
+      ? Math.max(0, (document.scrollingElement || document.documentElement).scrollHeight - window.innerHeight)
+      : Math.max(0, container.scrollHeight - container.clientHeight);
+    const targetTop = Math.min(maxTop, Math.max(0, rawTarget));
+    const waitMs = estimateScrollDurationMs(startTop, targetTop);
+
+    scrollContainerTo(container, targetTop, "smooth");
+    setTimeout(() => {
+      flashMessage(host);
+    }, waitMs + 120);
   }
 
   function putHotCache(row) {
