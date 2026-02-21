@@ -886,11 +886,16 @@
     }
   }
 
-  function regroupAllSecondaryGroups() {
+  async function regroupAllSecondaryGroups() {
+    const expandedHosts = Array.from(document.querySelectorAll(`[${EXPANDED_LOCK_ATTR}="1"]`));
+    for (const host of expandedHosts) {
+      await collapseExpandedMessage(host, { focus: false });
+    }
     const manualOpened = Array.from(document.querySelectorAll(`[${GROUP_MANUAL_OPEN_ATTR}]`));
     for (const host of manualOpened) {
       host.removeAttribute(GROUP_MANUAL_OPEN_ATTR);
     }
+    scheduleFullIndexSync(80);
     scheduleSecondaryGrouping(20);
   }
 
@@ -1065,7 +1070,8 @@
     ensureInlineCollapseButton(host);
   }
 
-  async function collapseExpandedMessage(host) {
+  async function collapseExpandedMessage(host, options = {}) {
+    const focus = options.focus !== false;
     if (!host || host.getAttribute(FLAG) === "1") return;
     const existingId = host.dataset.mrId;
     if (existingId) {
@@ -1081,11 +1087,15 @@
       host.removeAttribute(EXPANDED_LOCK_ATTR);
       host.setAttribute(FLAG, "1");
       host.innerHTML = compactUI(row.role, row.preview, existingId, pos.messageIndex, pos.totalMessages);
-      focusMessageTop(host);
+      if (focus) {
+        focusMessageTop(host);
+      }
       return;
     }
     compactMessage(host);
-    focusMessageTop(host);
+    if (focus) {
+      focusMessageTop(host);
+    }
   }
 
   document.addEventListener("click", async (e) => {
@@ -1133,7 +1143,7 @@
         return;
       }
       if (action === "group-regroup-all") {
-        regroupAllSecondaryGroups();
+        await regroupAllSecondaryGroups();
         showStatus("已手動重啟二級收合", "done");
       }
       return;
