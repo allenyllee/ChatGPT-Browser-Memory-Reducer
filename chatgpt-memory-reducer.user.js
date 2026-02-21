@@ -155,6 +155,7 @@
     if (!badge) {
       badge = document.createElement("div");
       badge.setAttribute(INDEX_BADGE_ATTR, "1");
+      badge.setAttribute("title", "捲動到這則對話頂端");
       host.prepend(badge);
     }
     if (badge.textContent !== label) {
@@ -279,7 +280,9 @@
         background: rgba(255, 255, 255, 0.88);
         backdrop-filter: blur(2px);
         font-variant-numeric: tabular-nums;
-        pointer-events: none;
+        pointer-events: auto;
+        cursor: pointer;
+        user-select: none;
         z-index: 4;
       }
       @media (max-width: 900px) {
@@ -567,6 +570,15 @@
   }
 
   document.addEventListener("click", async (e) => {
+    const indexBadge = e.target.closest(`[${INDEX_BADGE_ATTR}="1"]`);
+    if (indexBadge) {
+      e.preventDefault();
+      e.stopPropagation();
+      const host = indexBadge.closest("[data-message-author-role]");
+      focusMessageTop(host);
+      return;
+    }
+
     const inlineCollapseBtn = e.target.closest(".mr-inline-collapse");
     if (inlineCollapseBtn) {
       e.preventDefault();
