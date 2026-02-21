@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Memory Reducer (Expandable + IndexedDB)
 // @namespace    local.chatgpt.memory.reducer
-// @version      0.4.0
+// @version      0.5.0
 // @description  Compress old ChatGPT messages to reduce lag, with expandable restore from IndexedDB.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -12,7 +12,7 @@
 (() => {
   "use strict";
 
-  const KEEP_LATEST = 24;
+  const KEEP_LATEST = 10;
   const PREVIEW_CHARS = 320;
   const MAX_COMPACT_PER_RUN = 10;
   const OBSERVER_DELAY_MS = 180;
@@ -100,6 +100,26 @@
     `;
   }
 
+  function ensureInlineCollapseButton(host) {
+    if (!host || host.getAttribute(FLAG) === "1") return;
+    if (host.querySelector("[data-mr-control='inline-collapse']")) return;
+    const control = document.createElement("div");
+    control.setAttribute("data-mr-control", "inline-collapse");
+    control.style.cssText = "margin-top:8px;display:flex;justify-content:flex-end;";
+    control.innerHTML =
+      '<button class="mr-inline-collapse" type="button" style="font-size:12px;opacity:.85;padding:4px 8px;border:1px solid rgba(128,128,128,.35);border-radius:8px;background:transparent;cursor:pointer;">收合此則</button>';
+    host.appendChild(control);
+  }
+
+  function getMessageSnapshot(el) {
+    const clone = el.cloneNode(true);
+    clone.querySelectorAll("[data-mr-control]").forEach((n) => n.remove());
+    return {
+      html: clone.innerHTML,
+      text: clone.textContent || "",
+    };
+  }
+
   function ensureStyles() {
     if (document.getElementById(STYLE_ID)) return;
     const style = document.createElement("style");
@@ -161,8 +181,9 @@
 
     const id = `m_${Date.now()}_${seq++}`;
     const role = el.getAttribute("data-message-author-role") || "unknown";
-    const html = el.innerHTML;
-    const preview = previewOf(el.textContent);
+    const snapshot = getMessageSnapshot(el);
+    const html = snapshot.html;
+    const preview = previewOf(snapshot.text);
     const row = { id, role, preview, html, ts: Date.now() };
 
     el.dataset.mrId = id;
@@ -208,7 +229,40 @@
     }
   }
 
+  function ensureButtonsForExpandedMessages() {
+    const msgs = Array.from(document.querySelectorAll('[data-message-author-role]'));
+    for (const msg of msgs) {
+      ensureInlineCollapseButton(msg);
+    }
+  }
+
+  async function collapseExpandedMessage(host) {
+    if (!host || host.getAttribute(FLAG) === "1") return;
+    const existingId = host.dataset.mrId;
+    if (existingId) {
+      let row = hotCache.get(existingId);
+      if (!row) {
+        row = await idbGet(existingId);
+      }
+      if (!row) return;
+      putHotCache(row);
+      host.setAttribute(FLAG, "1");
+      host.innerHTML = compactUI(row.role, row.preview, existingId);
+      return;
+    }
+    compactMessage(host);
+  }
+
   document.addEventListener("click", async (e) => {
+    const inlineCollapseBtn = e.target.closest(".mr-inline-collapse");
+    if (inlineCollapseBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const host = inlineCollapseBtn.closest("[data-message-author-role]");
+      await collapseExpandedMessage(host);
+      return;
+    }
+
     const btn = e.target.closest(".mr-toggle");
     if (!btn) return;
 
@@ -239,6 +293,7 @@
           <div class="mr-expanded">${row.html}</div>
           <button class="mr-toggle" data-mr-action="collapse" data-row-id="${id}" style="margin-top:8px">收合</button>
         `;
+        ensureInlineCollapseButton(host);
       } else {
         host.innerHTML = compactUI(row.role, row.preview, id);
       }
@@ -253,10 +308,12 @@
   });
 
   const observer = new MutationObserver(() => {
+    ensureButtonsForExpandedMessages();
     scheduleCompact();
   });
 
   ensureStyles();
+  ensureButtonsForExpandedMessages();
   runCompact();
   observer.observe(document.body, { childList: true, subtree: true });
   setInterval(() => {
