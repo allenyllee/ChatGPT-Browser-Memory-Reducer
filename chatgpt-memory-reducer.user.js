@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Memory Reducer (Expandable + IndexedDB)
 // @namespace    local.chatgpt.memory.reducer
-// @version      0.5.8
+// @version      0.5.15
 // @description  Compress old ChatGPT messages to reduce lag, with expandable restore from IndexedDB.
 // @author       allenyllee
 // @downloadURL  https://gist.github.com/b1e7051e064b4ad8084efa16edc4fbf8/raw/chatgpt-memory-reducer.user.js
@@ -30,6 +30,7 @@
   const FLASH_CLASS = "mr-focus-flash";
   const FLASH_ANIM_MS = 1800;
   const STATUS_ID = "mr-status";
+  const INDEX_BADGE_ATTR = "data-mr-index-badge";
   const SCROLL_BASE_MS = 350;
   const SCROLL_MS_PER_PX = 0.35;
   const SCROLL_MAX_MS = 1800;
@@ -141,7 +142,23 @@
     const msgs = Array.from(document.querySelectorAll('[data-message-author-role]'));
     const total = msgs.length;
     for (let i = 0; i < total; i += 1) {
-      msgs[i].dataset.mrIndexLabel = indexLabelOf(i + 1, total);
+      const msg = msgs[i];
+      const label = indexLabelOf(i + 1, total);
+      msg.dataset.mrIndexLabel = label;
+      ensureStickyIndexBadge(msg, label);
+    }
+  }
+
+  function ensureStickyIndexBadge(host, label) {
+    if (!host) return;
+    let badge = host.querySelector(`:scope > [${INDEX_BADGE_ATTR}="1"]`);
+    if (!badge) {
+      badge = document.createElement("div");
+      badge.setAttribute(INDEX_BADGE_ATTR, "1");
+      host.prepend(badge);
+    }
+    if (badge.textContent !== label) {
+      badge.textContent = label;
     }
   }
 
@@ -158,7 +175,7 @@
 
   function getMessageSnapshot(el) {
     const clone = el.cloneNode(true);
-    clone.querySelectorAll("[data-mr-control]").forEach((n) => n.remove());
+    clone.querySelectorAll("[data-mr-control], [data-mr-index-badge]").forEach((n) => n.remove());
     return {
       html: clone.innerHTML,
       text: clone.textContent || "",
@@ -243,25 +260,45 @@
       [data-message-author-role][data-mr-index-label] {
         position: relative;
         overflow: visible;
+        padding-top: 32px;
       }
-      [data-message-author-role][data-mr-index-label]::before {
-        content: attr(data-mr-index-label);
+      [data-mr-index-badge="1"] {
         position: absolute;
-        left: -62px;
-        top: 10px;
-        min-width: 46px;
-        text-align: right;
+        right: 10px;
+        top: 6px;
+        padding: 4px 8px;
+        border-radius: 999px;
         font-size: 11px;
         line-height: 1;
-        color: rgba(120, 120, 120, 0.95);
+        color: rgba(120, 120, 120, 0.98);
+        border: 1px solid rgba(148, 163, 184, 0.35);
+        background: rgba(255, 255, 255, 0.88);
+        backdrop-filter: blur(2px);
         font-variant-numeric: tabular-nums;
         pointer-events: none;
+        z-index: 4;
+      }
+      [data-message-author-role][data-mr-index-label]:has(.mr-compact-card) > [data-mr-index-badge="1"] {
+        top: 6px;
+      }
+      [data-message-author-role][data-mr-index-label]:has(.mr-compact-card) {
+        padding-top: 28px;
       }
       @media (max-width: 900px) {
-        [data-message-author-role][data-mr-index-label]::before {
-          left: -48px;
-          min-width: 36px;
+        [data-mr-index-badge="1"] {
+          right: 8px;
+          top: 5px;
+          padding: 3px 7px;
           font-size: 10px;
+        }
+        [data-message-author-role][data-mr-index-label]:has(.mr-compact-card) > [data-mr-index-badge="1"] {
+          top: 5px;
+        }
+        [data-message-author-role][data-mr-index-label] {
+          padding-top: 26px;
+        }
+        [data-message-author-role][data-mr-index-label]:has(.mr-compact-card) {
+          padding-top: 22px;
         }
       }
     `;
