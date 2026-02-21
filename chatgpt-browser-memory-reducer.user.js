@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Browser Memory Reducer (Expandable + IndexedDB)
 // @namespace    local.chatgpt.browser.memory.reducer
-// @version      0.5.15
+// @version      0.6.0
 // @description  Compress old ChatGPT messages to reduce browser memory usage and lag, with expandable restore from IndexedDB.
 // @author       allenyllee
 // @downloadURL  https://gist.github.com/b1e7051e064b4ad8084efa16edc4fbf8/raw/chatgpt-browser-memory-reducer.user.js
@@ -30,7 +30,12 @@
   const FLASH_CLASS = "mr-focus-flash";
   const FLASH_ANIM_MS = 1800;
   const STATUS_ID = "mr-status";
+  const BOOKMARK_PANEL_ID = "mr-bookmark-panel";
+  const BOOKMARK_SELECT_ID = "mr-bookmark-select";
+  const BOOKMARK_INPUT_ID = "mr-bookmark-input";
+  const BOOKMARK_PANEL_MIN_BOTTOM = 56;
   const INDEX_BADGE_ATTR = "data-mr-index-badge";
+  const INDEX_VALUE_ATTR = "data-mr-index-value";
   const EXPANDED_CLASS = "mr-expanded-host";
   const EXPANDED_LOCK_ATTR = "data-mr-expanded-lock";
   const SCROLL_BASE_MS = 350;
@@ -46,6 +51,7 @@
   let routeKey = `${location.pathname}${location.search}`;
   let statusTimer = null;
   let statusDotPhase = 0;
+  let bookmarks = [];
 
   const hotCache = new Map();
   const writeQueue = [];
@@ -128,6 +134,13 @@
     return "?";
   }
 
+  function indexFromLabel(label) {
+    const m = /^(\d+)\//.exec(String(label || ""));
+    if (!m) return null;
+    const n = Number(m[1]);
+    return Number.isInteger(n) && n > 0 ? n : null;
+  }
+
   function resolveMessagePosition(host, fallbackIndex, fallbackTotal) {
     if (Number.isInteger(fallbackIndex) && Number.isInteger(fallbackTotal)) {
       return { messageIndex: fallbackIndex, totalMessages: fallbackTotal };
@@ -154,15 +167,155 @@
   function ensureStickyIndexBadge(host, label) {
     if (!host) return;
     let badge = host.querySelector(`:scope > [${INDEX_BADGE_ATTR}="1"]`);
+    const indexValue = indexFromLabel(label) || resolveMessagePosition(host).messageIndex;
+    const bookmarked = Number.isInteger(indexValue) && bookmarks.includes(indexValue);
     if (!badge) {
       badge = document.createElement("div");
       badge.setAttribute(INDEX_BADGE_ATTR, "1");
-      badge.setAttribute("title", "捲動到這則對話頂端");
       host.prepend(badge);
     }
-    if (badge.textContent !== label) {
-      badge.textContent = label;
+    const viewLabel = bookmarked ? `${label} ★` : label;
+    badge.setAttribute(
+      "title",
+      bookmarked
+        ? "點擊捲動到這則對話頂端。Shift+點擊可取消書籤。"
+        : "點擊捲動到這則對話頂端。Shift+點擊可加入書籤。"
+    );
+    if (Number.isInteger(indexValue)) {
+      badge.setAttribute(INDEX_VALUE_ATTR, String(indexValue));
+    } else {
+      badge.removeAttribute(INDEX_VALUE_ATTR);
     }
+    if (badge.textContent !== viewLabel) {
+      badge.textContent = viewLabel;
+    }
+  }
+
+  function getBookmarkStorageKey() {
+    return `mr-bookmarks:${routeKey}`;
+  }
+
+  function normalizeBookmarks(input) {
+    if (!Array.isArray(input)) return [];
+    const seen = new Set();
+    const out = [];
+    for (const v of input) {
+      const n = Number(v);
+      if (!Number.isInteger(n) || n <= 0 || seen.has(n)) continue;
+      seen.add(n);
+      out.push(n);
+    }
+    out.sort((a, b) => a - b);
+    return out;
+  }
+
+  function loadBookmarks() {
+    try {
+      const raw = localStorage.getItem(getBookmarkStorageKey());
+      if (!raw) return [];
+      return normalizeBookmarks(JSON.parse(raw));
+    } catch (err) {
+      console.warn("[MR] load bookmarks failed:", err);
+      return [];
+    }
+  }
+
+  function saveBookmarks() {
+    try {
+      localStorage.setItem(getBookmarkStorageKey(), JSON.stringify(bookmarks));
+    } catch (err) {
+      console.warn("[MR] save bookmarks failed:", err);
+    }
+  }
+
+  function rerenderBookmarkSelect() {
+    const select = document.getElementById(BOOKMARK_SELECT_ID);
+    if (!select) return;
+    const previous = Number(select.value);
+    if (!bookmarks.length) {
+      select.innerHTML = '<option value="">書籤（空）</option>';
+      return;
+    }
+    select.innerHTML =
+      '<option value="">選擇書籤編號</option>' +
+      bookmarks.map((n) => `<option value="${n}">${n}</option>`).join("");
+    if (Number.isInteger(previous) && bookmarks.includes(previous)) {
+      select.value = String(previous);
+    }
+  }
+
+  function rerenderBookmarkDecorations() {
+    syncAllMessageIndexLabels();
+    rerenderBookmarkSelect();
+  }
+
+  function addBookmark(index) {
+    if (!Number.isInteger(index) || index <= 0) return false;
+    if (bookmarks.includes(index)) return false;
+    bookmarks = normalizeBookmarks([...bookmarks, index]);
+    saveBookmarks();
+    rerenderBookmarkDecorations();
+    return true;
+  }
+
+  function removeBookmark(index) {
+    if (!Number.isInteger(index) || index <= 0) return false;
+    if (!bookmarks.includes(index)) return false;
+    bookmarks = bookmarks.filter((n) => n !== index);
+    saveBookmarks();
+    rerenderBookmarkDecorations();
+    return true;
+  }
+
+  function toggleBookmark(index) {
+    if (!Number.isInteger(index) || index <= 0) return null;
+    if (bookmarks.includes(index)) {
+      removeBookmark(index);
+      return false;
+    }
+    addBookmark(index);
+    return true;
+  }
+
+  function jumpToMessageIndex(index) {
+    if (!Number.isInteger(index) || index <= 0) return false;
+    const msgs = Array.from(document.querySelectorAll('[data-message-author-role]'));
+    const target = msgs[index - 1];
+    if (!target) return false;
+    focusMessageTop(target);
+    return true;
+  }
+
+  function ensureBookmarkPanel() {
+    let panel = document.getElementById(BOOKMARK_PANEL_ID);
+    if (!panel) {
+      panel = document.createElement("div");
+      panel.id = BOOKMARK_PANEL_ID;
+      panel.innerHTML = `
+        <input id="${BOOKMARK_INPUT_ID}" type="number" min="1" step="1" placeholder="編號">
+        <button type="button" data-mr-action="bookmark-add">加入</button>
+        <select id="${BOOKMARK_SELECT_ID}"></select>
+        <button type="button" data-mr-action="bookmark-jump">跳轉</button>
+        <button type="button" data-mr-action="bookmark-remove">刪除</button>
+      `;
+      document.body.appendChild(panel);
+    }
+    rerenderBookmarkSelect();
+    updateBookmarkPanelPosition();
+  }
+
+  function updateBookmarkPanelPosition() {
+    const panel = document.getElementById(BOOKMARK_PANEL_ID);
+    if (!panel) return;
+    let bottom = BOOKMARK_PANEL_MIN_BOTTOM;
+    const composerTextarea = document.querySelector("form textarea");
+    const composerForm = composerTextarea ? composerTextarea.closest("form") : null;
+    if (composerForm) {
+      const rect = composerForm.getBoundingClientRect();
+      const occupiedBottom = Math.max(0, window.innerHeight - rect.top);
+      bottom = Math.max(bottom, occupiedBottom + 10);
+    }
+    panel.style.bottom = `${Math.round(bottom)}px`;
   }
 
   function ensureInlineCollapseButton(host) {
@@ -252,6 +405,64 @@
         opacity: 1;
         transform: translateY(0);
       }
+      #${BOOKMARK_PANEL_ID} {
+        position: fixed;
+        right: 14px;
+        bottom: ${BOOKMARK_PANEL_MIN_BOTTOM}px;
+        z-index: 2147483647;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px;
+        border-radius: 10px;
+        border: 1px solid rgba(148, 163, 184, 0.45);
+        background: rgba(255, 255, 255, 0.94);
+        backdrop-filter: blur(2px);
+        color: #111827;
+      }
+      #${BOOKMARK_PANEL_ID} input,
+      #${BOOKMARK_PANEL_ID} select,
+      #${BOOKMARK_PANEL_ID} button {
+        height: 28px;
+        border-radius: 8px;
+        border: 1px solid rgba(148, 163, 184, 0.55);
+        background: #fff;
+        font-size: 12px;
+        color: #111827;
+      }
+      #${BOOKMARK_PANEL_ID} input::placeholder {
+        color: rgba(55, 65, 81, 0.88);
+      }
+      #${BOOKMARK_PANEL_ID} input {
+        width: 68px;
+        padding: 0 8px;
+      }
+      #${BOOKMARK_PANEL_ID} select {
+        min-width: 96px;
+        max-width: 124px;
+        padding: 0 6px;
+      }
+      #${BOOKMARK_PANEL_ID} button {
+        padding: 0 8px;
+        cursor: pointer;
+      }
+      @media (prefers-color-scheme: dark) {
+        #${BOOKMARK_PANEL_ID} {
+          border-color: rgba(148, 163, 184, 0.35);
+          background: rgba(17, 24, 39, 0.92);
+          color: #e5e7eb;
+        }
+        #${BOOKMARK_PANEL_ID} input,
+        #${BOOKMARK_PANEL_ID} select,
+        #${BOOKMARK_PANEL_ID} button {
+          border-color: rgba(148, 163, 184, 0.45);
+          background: rgba(31, 41, 55, 0.96);
+          color: #e5e7eb;
+        }
+        #${BOOKMARK_PANEL_ID} input::placeholder {
+          color: rgba(209, 213, 219, 0.78);
+        }
+      }
       #${STATUS_ID}.working {
         color: #7c4a03;
         border: 1px solid rgba(251, 191, 36, .65);
@@ -290,6 +501,13 @@
         z-index: 4;
       }
       @media (max-width: 900px) {
+        #${BOOKMARK_PANEL_ID} {
+          right: 8px;
+          bottom: ${BOOKMARK_PANEL_MIN_BOTTOM}px;
+          left: 8px;
+          overflow-x: auto;
+          justify-content: flex-start;
+        }
         [data-mr-index-badge="1"] {
           top: 52px;
           margin-right: 8px;
@@ -488,6 +706,8 @@
     const nextKey = `${location.pathname}${location.search}`;
     if (nextKey === routeKey) return;
     routeKey = nextKey;
+    bookmarks = loadBookmarks();
+    rerenderBookmarkSelect();
     startupDone = false;
     showStatus("收合中", "working");
     scheduleCompact(30);
@@ -589,11 +809,69 @@
   }
 
   document.addEventListener("click", async (e) => {
+    const bookmarkPanel = e.target.closest(`#${BOOKMARK_PANEL_ID}`);
+    if (bookmarkPanel) {
+      const action = e.target.getAttribute("data-mr-action");
+      if (!action) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (action === "bookmark-add") {
+        const input = document.getElementById(BOOKMARK_INPUT_ID);
+        const index = Number(input && input.value);
+        if (!Number.isInteger(index) || index <= 0) {
+          showStatus("請輸入有效編號", "done");
+          return;
+        }
+        if (addBookmark(index)) {
+          showStatus(`已加入書籤 #${index}`, "done");
+        } else {
+          showStatus(`書籤 #${index} 已存在`, "done");
+        }
+        if (input) input.value = "";
+        return;
+      }
+      if (action === "bookmark-jump") {
+        const select = document.getElementById(BOOKMARK_SELECT_ID);
+        const index = Number(select && select.value);
+        if (!Number.isInteger(index) || index <= 0) {
+          showStatus("請先選擇書籤", "done");
+          return;
+        }
+        if (jumpToMessageIndex(index)) {
+          showStatus(`已跳轉到 #${index}`, "done");
+        } else {
+          showStatus(`找不到 #${index}`, "done");
+        }
+        return;
+      }
+      if (action === "bookmark-remove") {
+        const select = document.getElementById(BOOKMARK_SELECT_ID);
+        const index = Number(select && select.value);
+        if (!Number.isInteger(index) || index <= 0) {
+          showStatus("請先選擇書籤", "done");
+          return;
+        }
+        if (removeBookmark(index)) {
+          showStatus(`已刪除書籤 #${index}`, "done");
+        } else {
+          showStatus(`書籤 #${index} 不存在`, "done");
+        }
+      }
+      return;
+    }
+
     const indexBadge = e.target.closest(`[${INDEX_BADGE_ATTR}="1"]`);
     if (indexBadge) {
       e.preventDefault();
       e.stopPropagation();
       const host = indexBadge.closest("[data-message-author-role]");
+      const badgeIndex = Number(indexBadge.getAttribute(INDEX_VALUE_ATTR));
+      if (e.shiftKey && Number.isInteger(badgeIndex) && badgeIndex > 0) {
+        const added = toggleBookmark(badgeIndex);
+        if (added === true) showStatus(`已加入書籤 #${badgeIndex}`, "done");
+        if (added === false) showStatus(`已取消書籤 #${badgeIndex}`, "done");
+        return;
+      }
       focusMessageTop(host);
       return;
     }
@@ -657,10 +935,14 @@
     checkRouteChange();
     syncAllMessageIndexLabels();
     ensureButtonsForExpandedMessages();
+    updateBookmarkPanelPosition();
     scheduleCompact();
   });
 
   ensureStyles();
+  bookmarks = loadBookmarks();
+  ensureBookmarkPanel();
+  updateBookmarkPanelPosition();
   showStatus("收合中", "working");
   syncAllMessageIndexLabels();
   ensureButtonsForExpandedMessages();
@@ -668,8 +950,10 @@
   observer.observe(document.body, { childList: true, subtree: true });
   setInterval(() => {
     checkRouteChange();
+    updateBookmarkPanelPosition();
     runCompact();
   }, PERIODIC_COMPACT_MS);
+  window.addEventListener("resize", updateBookmarkPanelPosition);
   setInterval(() => {
     flushWrites().catch((err) => console.error("[MR] periodic flush failed:", err));
   }, 2000);
