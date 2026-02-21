@@ -260,12 +260,16 @@
       [data-message-author-role][data-mr-index-label] {
         position: relative;
         overflow: visible;
-        padding-top: 32px;
       }
       [data-mr-index-badge="1"] {
-        position: absolute;
-        right: 10px;
-        top: 6px;
+        position: sticky;
+        top: 56px;
+        display: block;
+        width: fit-content;
+        margin-left: auto;
+        margin-right: 10px;
+        margin-top: 4px;
+        margin-bottom: 6px;
         padding: 4px 8px;
         border-radius: 999px;
         font-size: 11px;
@@ -278,27 +282,12 @@
         pointer-events: none;
         z-index: 4;
       }
-      [data-message-author-role][data-mr-index-label]:has(.mr-compact-card) > [data-mr-index-badge="1"] {
-        top: 6px;
-      }
-      [data-message-author-role][data-mr-index-label]:has(.mr-compact-card) {
-        padding-top: 28px;
-      }
       @media (max-width: 900px) {
         [data-mr-index-badge="1"] {
-          right: 8px;
-          top: 5px;
+          top: 52px;
+          margin-right: 8px;
           padding: 3px 7px;
           font-size: 10px;
-        }
-        [data-message-author-role][data-mr-index-label]:has(.mr-compact-card) > [data-mr-index-badge="1"] {
-          top: 5px;
-        }
-        [data-message-author-role][data-mr-index-label] {
-          padding-top: 26px;
-        }
-        [data-message-author-role][data-mr-index-label]:has(.mr-compact-card) {
-          padding-top: 22px;
         }
       }
     `;
