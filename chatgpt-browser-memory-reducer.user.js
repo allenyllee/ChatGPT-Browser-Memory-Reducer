@@ -1,11 +1,11 @@
 // ==UserScript==
-// @name         ChatGPT Memory Reducer (Expandable + IndexedDB)
-// @namespace    local.chatgpt.memory.reducer
+// @name         ChatGPT Browser Memory Reducer (Expandable + IndexedDB)
+// @namespace    local.chatgpt.browser.memory.reducer
 // @version      0.5.15
-// @description  Compress old ChatGPT messages to reduce lag, with expandable restore from IndexedDB.
+// @description  Compress old ChatGPT messages to reduce browser memory usage and lag, with expandable restore from IndexedDB.
 // @author       allenyllee
-// @downloadURL  https://gist.github.com/b1e7051e064b4ad8084efa16edc4fbf8/raw/chatgpt-memory-reducer.user.js
-// @updateURL    https://gist.github.com/b1e7051e064b4ad8084efa16edc4fbf8/raw/chatgpt-memory-reducer.user.js
+// @downloadURL  https://gist.github.com/b1e7051e064b4ad8084efa16edc4fbf8/raw/chatgpt-browser-memory-reducer.user.js
+// @updateURL    https://gist.github.com/b1e7051e064b4ad8084efa16edc4fbf8/raw/chatgpt-browser-memory-reducer.user.js
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
 // @run-at       document-idle
@@ -23,7 +23,7 @@
   const FLUSH_DELAY_MS = 120;
   const HOT_CACHE_LIMIT = 8;
   const COLLAPSE_SCROLL_TOP_OFFSET = 72;
-  const DB_NAME = "chatgpt-memory-reducer";
+  const DB_NAME = "chatgpt-browser-memory-reducer";
   const STORE = "messages";
   const FLAG = "data-mr-compacted";
   const STYLE_ID = "mr-style";
