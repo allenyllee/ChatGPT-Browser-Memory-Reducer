@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Browser Memory Reducer (Expandable + IndexedDB)
 // @namespace    local.chatgpt.browser.memory.reducer
-// @version      0.6.1
+// @version      0.6.3
 // @description  Compress old ChatGPT messages to reduce browser memory usage and lag, with expandable restore from IndexedDB.
 // @author       allenyllee
 // @downloadURL  https://gist.github.com/b1e7051e064b4ad8084efa16edc4fbf8/raw/chatgpt-browser-memory-reducer.user.js
@@ -22,6 +22,9 @@
   const PERIODIC_COMPACT_MS = 1500;
   const FLUSH_DELAY_MS = 120;
   const HOT_CACHE_LIMIT = 8;
+  const INDEX_SYNC_DELAY_IDLE_MS = 300;
+  const INDEX_SYNC_DELAY_STREAMING_MS = 1200;
+  const PANEL_REPOSITION_DELAY_MS = 120;
   const COLLAPSE_SCROLL_TOP_OFFSET = 72;
   const DB_NAME = "chatgpt-browser-memory-reducer";
   const STORE = "messages";
@@ -50,6 +53,8 @@
   let compactInFlight = false;
   let fullIndexSyncScheduled = null;
   let flushScheduled = null;
+  let bookmarkPanelPositionScheduled = null;
+  let wasStreaming = false;
   let startupDone = false;
   let routeKey = `${location.pathname}${location.search}`;
   let statusTimer = null;
@@ -791,7 +796,9 @@
     if (pending > 0 && !startupDone) {
       showStatus("收合中", "working");
     }
-    syncAllMessageIndexLabels();
+    if (compacted > 0) {
+      scheduleFullIndexSync(80);
+    }
     maybeCompleteStartupStatus();
   }
 
@@ -828,6 +835,22 @@
       fullIndexSyncScheduled = null;
       syncAllMessageIndexLabels();
     }, delayMs);
+  }
+
+  function isStreamingNow() {
+    return Boolean(
+      document.querySelector('button[data-testid="stop-button"]') ||
+        document.querySelector('form button[aria-label*="Stop"]') ||
+        document.querySelector('form button[aria-label*="停止"]')
+    );
+  }
+
+  function scheduleBookmarkPanelPosition() {
+    if (bookmarkPanelPositionScheduled) return;
+    bookmarkPanelPositionScheduled = setTimeout(() => {
+      bookmarkPanelPositionScheduled = null;
+      updateBookmarkPanelPosition();
+    }, PANEL_REPOSITION_DELAY_MS);
   }
 
   function collectMessageHostsFromNode(node, out) {
@@ -1051,12 +1074,36 @@
 
   const observer = new MutationObserver((records) => {
     const routeChanged = checkRouteChange();
+    const streaming = isStreamingNow();
+    if (streaming) {
+      wasStreaming = true;
+      if (routeChanged) {
+        processAddedMessageHosts(records);
+        scheduleFullIndexSync(INDEX_SYNC_DELAY_STREAMING_MS);
+        scheduleCompact(30);
+      }
+      scheduleBookmarkPanelPosition();
+      return;
+    }
+
+    if (wasStreaming) {
+      wasStreaming = false;
+      scheduleFullIndexSync(80);
+      scheduleCompact(60);
+    }
+
     const messageMutated = hasMessageMutation(records);
-    processAddedMessageHosts(records);
-    scheduleFullIndexSync();
-    updateBookmarkPanelPosition();
     if (routeChanged || messageMutated) {
-      scheduleCompact();
+      processAddedMessageHosts(records);
+      scheduleFullIndexSync(INDEX_SYNC_DELAY_IDLE_MS);
+    }
+    scheduleBookmarkPanelPosition();
+    if (routeChanged || messageMutated) {
+      if (routeChanged) {
+        scheduleCompact(30);
+      } else {
+        scheduleCompact();
+      }
     }
   });
 
@@ -1070,9 +1117,15 @@
   runCompact();
   observer.observe(document.body, { childList: true, subtree: true });
   setInterval(() => {
+    const streaming = isStreamingNow();
+    if (!streaming && wasStreaming) {
+      wasStreaming = false;
+      scheduleFullIndexSync(80);
+      scheduleCompact(60);
+    }
     checkRouteChange();
     updateBookmarkPanelPosition();
-    if (!startupDone) {
+    if (!startupDone && !streaming) {
       runCompact();
     }
   }, PERIODIC_COMPACT_MS);
