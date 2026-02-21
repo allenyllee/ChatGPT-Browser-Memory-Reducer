@@ -31,6 +31,8 @@
   const FLASH_ANIM_MS = 1800;
   const STATUS_ID = "mr-status";
   const INDEX_BADGE_ATTR = "data-mr-index-badge";
+  const EXPANDED_CLASS = "mr-expanded-host";
+  const EXPANDED_LOCK_ATTR = "data-mr-expanded-lock";
   const SCROLL_BASE_MS = 350;
   const SCROLL_MS_PER_PX = 0.35;
   const SCROLL_MAX_MS = 1800;
@@ -188,24 +190,26 @@
     const style = document.createElement("style");
     style.id = STYLE_ID;
     style.textContent = `
-      .mr-expanded {
+      .${EXPANDED_CLASS} {
+        width: 100%;
         max-width: 100%;
-        overflow-x: auto;
+        min-width: 0;
+        overflow-x: visible;
       }
-      .mr-expanded pre,
-      .mr-expanded code,
-      .mr-expanded table,
-      .mr-expanded img {
+      .${EXPANDED_CLASS} pre,
+      .${EXPANDED_CLASS} code,
+      .${EXPANDED_CLASS} table,
+      .${EXPANDED_CLASS} img {
         max-width: 100%;
       }
-      .mr-expanded pre,
-      .mr-expanded table {
+      .${EXPANDED_CLASS} pre,
+      .${EXPANDED_CLASS} table {
         overflow-x: auto;
         display: block;
       }
-      .mr-expanded p,
-      .mr-expanded li,
-      .mr-expanded div {
+      .${EXPANDED_CLASS} p,
+      .${EXPANDED_CLASS} li,
+      .${EXPANDED_CLASS} div {
         overflow-wrap: anywhere;
         word-break: break-word;
       }
@@ -442,6 +446,7 @@
 
   function compactMessage(el, messageIndex, totalMessages) {
     if (!el || el.getAttribute(FLAG) === "1") return;
+    if (el.getAttribute(EXPANDED_LOCK_ATTR) === "1") return;
     const pos = resolveMessagePosition(el, messageIndex, totalMessages);
 
     const id = `m_${Date.now()}_${seq++}`;
@@ -461,6 +466,8 @@
 
     el.dataset.mrId = id;
     el.dataset.mrIndexLabel = indexLabelOf(row.messageIndex, row.totalMessages);
+    el.classList.remove(EXPANDED_CLASS);
+    el.removeAttribute(EXPANDED_LOCK_ATTR);
     el.setAttribute(FLAG, "1");
     el.innerHTML = compactUI(role, preview, id, row.messageIndex, row.totalMessages);
 
@@ -548,6 +555,23 @@
     }
   }
 
+  function renderExpandedMessage(host, row, id) {
+    if (!host || !row || !id) return;
+    host.removeAttribute(FLAG);
+    host.setAttribute(EXPANDED_LOCK_ATTR, "1");
+    host.classList.add(EXPANDED_CLASS);
+    host.innerHTML = row.html;
+
+    const control = document.createElement("div");
+    control.setAttribute("data-mr-control", "toggle-collapse");
+    control.style.cssText = "margin-top:8px;display:flex;justify-content:flex-end;";
+    control.innerHTML =
+      `<button class="mr-toggle" data-mr-action="collapse" data-row-id="${id}" style="font-size:12px;opacity:.85;padding:4px 8px;border:1px solid rgba(128,128,128,.35);border-radius:8px;background:transparent;cursor:pointer;">收合</button>`;
+    host.appendChild(control);
+
+    ensureInlineCollapseButton(host);
+  }
+
   async function collapseExpandedMessage(host) {
     if (!host || host.getAttribute(FLAG) === "1") return;
     const existingId = host.dataset.mrId;
@@ -560,6 +584,8 @@
       putHotCache(row);
       const pos = resolveMessagePosition(host, row.messageIndex, row.totalMessages);
       host.dataset.mrIndexLabel = indexLabelOf(pos.messageIndex, pos.totalMessages);
+      host.classList.remove(EXPANDED_CLASS);
+      host.removeAttribute(EXPANDED_LOCK_ATTR);
       host.setAttribute(FLAG, "1");
       host.innerHTML = compactUI(row.role, row.preview, existingId, pos.messageIndex, pos.totalMessages);
       focusMessageTop(host);
@@ -614,14 +640,12 @@
       putHotCache(row);
 
       if (action === "expand") {
-        host.innerHTML = `
-          <div class="mr-expanded">${row.html}</div>
-          <button class="mr-toggle" data-mr-action="collapse" data-row-id="${id}" style="margin-top:8px">收合</button>
-        `;
-        ensureInlineCollapseButton(host);
+        renderExpandedMessage(host, row, id);
       } else {
         const pos = resolveMessagePosition(host, row.messageIndex, row.totalMessages);
         host.dataset.mrIndexLabel = indexLabelOf(pos.messageIndex, pos.totalMessages);
+        host.classList.remove(EXPANDED_CLASS);
+        host.removeAttribute(EXPANDED_LOCK_ATTR);
         host.innerHTML = compactUI(row.role, row.preview, id, pos.messageIndex, pos.totalMessages);
         host.setAttribute(FLAG, "1");
         focusMessageTop(host);
