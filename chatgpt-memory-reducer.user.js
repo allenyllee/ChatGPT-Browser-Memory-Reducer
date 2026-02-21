@@ -22,6 +22,7 @@
   const DB_NAME = "chatgpt-memory-reducer";
   const STORE = "messages";
   const FLAG = "data-mr-compacted";
+  const STYLE_ID = "mr-style";
 
   let seq = 1;
   let dbPromise = null;
@@ -97,6 +98,36 @@
         <button class="mr-toggle" data-mr-action="expand" data-row-id="${id}" style="margin-top:8px">展開</button>
       </div>
     `;
+  }
+
+  function ensureStyles() {
+    if (document.getElementById(STYLE_ID)) return;
+    const style = document.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = `
+      .mr-expanded {
+        max-width: 100%;
+        overflow-x: auto;
+      }
+      .mr-expanded pre,
+      .mr-expanded code,
+      .mr-expanded table,
+      .mr-expanded img {
+        max-width: 100%;
+      }
+      .mr-expanded pre,
+      .mr-expanded table {
+        overflow-x: auto;
+        display: block;
+      }
+      .mr-expanded p,
+      .mr-expanded li,
+      .mr-expanded div {
+        overflow-wrap: anywhere;
+        word-break: break-word;
+      }
+    `;
+    document.head.appendChild(style);
   }
 
   function putHotCache(row) {
@@ -205,7 +236,7 @@
 
       if (action === "expand") {
         host.innerHTML = `
-          <div>${row.html}</div>
+          <div class="mr-expanded">${row.html}</div>
           <button class="mr-toggle" data-mr-action="collapse" data-row-id="${id}" style="margin-top:8px">收合</button>
         `;
       } else {
@@ -225,6 +256,7 @@
     scheduleCompact();
   });
 
+  ensureStyles();
   runCompact();
   observer.observe(document.body, { childList: true, subtree: true });
   setInterval(() => {
