@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Memory Reducer (Expandable + IndexedDB)
 // @namespace    local.chatgpt.memory.reducer
-// @version      0.5.4
+// @version      0.5.5
 // @description  Compress old ChatGPT messages to reduce lag, with expandable restore from IndexedDB.
 // @author       allenyllee
 // @match        https://chatgpt.com/*
@@ -38,6 +38,7 @@
   let compactInFlight = false;
   let flushScheduled = null;
   let startupDone = false;
+  let routeKey = `${location.pathname}${location.search}`;
   let statusTimer = null;
   let statusDotPhase = 0;
 
@@ -380,6 +381,15 @@
     }, delayMs);
   }
 
+  function checkRouteChange() {
+    const nextKey = `${location.pathname}${location.search}`;
+    if (nextKey === routeKey) return;
+    routeKey = nextKey;
+    startupDone = false;
+    showStatus("收合中", "working");
+    scheduleCompact(30);
+  }
+
   function runCompact() {
     if (compactInFlight) return;
     compactInFlight = true;
@@ -516,6 +526,7 @@
   });
 
   const observer = new MutationObserver(() => {
+    checkRouteChange();
     ensureButtonsForExpandedMessages();
     scheduleCompact();
   });
@@ -526,6 +537,7 @@
   runCompact();
   observer.observe(document.body, { childList: true, subtree: true });
   setInterval(() => {
+    checkRouteChange();
     runCompact();
   }, PERIODIC_COMPACT_MS);
   setInterval(() => {
