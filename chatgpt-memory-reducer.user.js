@@ -562,13 +562,6 @@
     host.classList.add(EXPANDED_CLASS);
     host.innerHTML = row.html;
 
-    const control = document.createElement("div");
-    control.setAttribute("data-mr-control", "toggle-collapse");
-    control.style.cssText = "margin-top:8px;display:flex;justify-content:flex-end;";
-    control.innerHTML =
-      `<button class="mr-toggle" data-mr-action="collapse" data-row-id="${id}" style="font-size:12px;opacity:.85;padding:4px 8px;border:1px solid rgba(128,128,128,.35);border-radius:8px;background:transparent;cursor:pointer;">收合</button>`;
-    host.appendChild(control);
-
     ensureInlineCollapseButton(host);
   }
 
