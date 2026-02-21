@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Browser Memory Reducer (Expandable + IndexedDB)
 // @namespace    local.chatgpt.browser.memory.reducer
-// @version      0.6.3
+// @version      0.7.0
 // @description  Compress old ChatGPT messages to reduce browser memory usage and lag, with expandable restore from IndexedDB.
 // @author       allenyllee
 // @downloadURL  https://gist.github.com/b1e7051e064b4ad8084efa16edc4fbf8/raw/chatgpt-browser-memory-reducer.user.js
@@ -25,6 +25,8 @@
   const INDEX_SYNC_DELAY_IDLE_MS = 300;
   const INDEX_SYNC_DELAY_STREAMING_MS = 1200;
   const PANEL_REPOSITION_DELAY_MS = 120;
+  const SECONDARY_GROUP_SIZE = 10;
+  const SECONDARY_GROUP_DELAY_MS = 260;
   const COLLAPSE_SCROLL_TOP_OFFSET = 72;
   const DB_NAME = "chatgpt-browser-memory-reducer";
   const STORE = "messages";
@@ -41,6 +43,10 @@
   const INDEX_BADGE_ATTR = "data-mr-index-badge";
   const INDEX_ADD_ATTR = "data-mr-index-add";
   const INDEX_VALUE_ATTR = "data-mr-index-value";
+  const GROUP_ATTR = "data-mr-group";
+  const GROUP_ID_ATTR = "data-mr-group-id";
+  const GROUP_MEMBER_ATTR = "data-mr-group-member";
+  const GROUP_MANUAL_OPEN_ATTR = "data-mr-group-manual-open";
   const EXPANDED_CLASS = "mr-expanded-host";
   const EXPANDED_LOCK_ATTR = "data-mr-expanded-lock";
   const SCROLL_BASE_MS = 350;
@@ -52,6 +58,7 @@
   let compactScheduled = null;
   let compactInFlight = false;
   let fullIndexSyncScheduled = null;
+  let secondaryGroupScheduled = null;
   let flushScheduled = null;
   let bookmarkPanelPositionScheduled = null;
   let wasStreaming = false;
@@ -306,7 +313,12 @@
   function jumpToMessageIndex(index) {
     if (!Number.isInteger(index) || index <= 0) return false;
     const msgs = Array.from(document.querySelectorAll('[data-message-author-role]'));
-    const target = msgs[index - 1];
+    let target = msgs[index - 1];
+    if (target && target.getAttribute(GROUP_MEMBER_ATTR) === "1") {
+      expandSecondaryGroup(target.getAttribute(GROUP_ID_ATTR));
+      const refreshed = Array.from(document.querySelectorAll('[data-message-author-role]'));
+      target = refreshed[index - 1];
+    }
     if (!target) return false;
     focusMessageTop(target);
     return true;
@@ -322,6 +334,7 @@
         <button type="button" data-mr-action="bookmark-add">加入</button>
         <select id="${BOOKMARK_SELECT_ID}"></select>
         <button type="button" data-mr-action="bookmark-remove">刪除</button>
+        <button type="button" data-mr-action="group-regroup-all">重收合</button>
       `;
       document.body.appendChild(panel);
     }
@@ -549,6 +562,35 @@
         cursor: default;
         opacity: .6;
       }
+      [${GROUP_ATTR}="1"] {
+        margin: 8px auto;
+        max-width: min(920px, calc(100% - 24px));
+        border: 1px dashed rgba(148, 163, 184, 0.7);
+        border-radius: 10px;
+        background: rgba(148, 163, 184, 0.12);
+        padding: 10px 12px;
+        color: inherit;
+      }
+      [${GROUP_ATTR}="1"] .mr-group-meta {
+        font-size: 12px;
+        opacity: .82;
+        margin-bottom: 6px;
+      }
+      [${GROUP_ATTR}="1"] .mr-group-title {
+        font-size: 13px;
+        line-height: 1.4;
+      }
+      [${GROUP_ATTR}="1"] .mr-group-actions {
+        margin-top: 8px;
+      }
+      [${GROUP_ATTR}="1"] button {
+        font-size: 12px;
+        padding: 4px 9px;
+        border-radius: 8px;
+        border: 1px solid rgba(128, 128, 128, 0.45);
+        background: rgba(255, 255, 255, 0.85);
+        cursor: pointer;
+      }
       @media (max-width: 900px) {
         #${BOOKMARK_PANEL_ID} {
           right: 8px;
@@ -745,6 +787,113 @@
     scheduleFlush();
   }
 
+  function getGroupRangeLabel(hosts) {
+    if (!hosts || !hosts.length) return "?";
+    const firstPos = resolveMessagePosition(hosts[0]);
+    const lastPos = resolveMessagePosition(hosts[hosts.length - 1]);
+    if (!Number.isInteger(firstPos.messageIndex) || !Number.isInteger(lastPos.messageIndex)) {
+      return "?";
+    }
+    return `${firstPos.messageIndex}-${lastPos.messageIndex}`;
+  }
+
+  function createSecondaryGroup(hosts) {
+    if (!hosts || hosts.length < SECONDARY_GROUP_SIZE) return;
+    const first = hosts[0];
+    if (!first || !first.parentElement) return;
+    const groupId = `g_${Date.now()}_${seq++}`;
+    const rangeLabel = getGroupRangeLabel(hosts);
+    const group = document.createElement("div");
+    group.setAttribute(GROUP_ATTR, "1");
+    group.setAttribute(GROUP_ID_ATTR, groupId);
+    group.innerHTML = `
+      <div class="mr-group-meta">二級收合（${hosts.length} 則）</div>
+      <div class="mr-group-title">已群組第 ${esc(rangeLabel)} 則訊息，降低渲染負擔</div>
+      <div class="mr-group-actions">
+        <button type="button" data-mr-action="group-expand" data-mr-group-id="${groupId}">展開此群組</button>
+      </div>
+    `;
+    first.parentElement.insertBefore(group, first);
+    for (const host of hosts) {
+      host.setAttribute(GROUP_MEMBER_ATTR, "1");
+      host.setAttribute(GROUP_ID_ATTR, groupId);
+      host.style.display = "none";
+    }
+  }
+
+  function runSecondaryGrouping() {
+    if (isStreamingNow()) return;
+    const msgs = Array.from(document.querySelectorAll('[data-message-author-role]'));
+    const cutoff = Math.max(0, msgs.length - KEEP_LATEST);
+    if (cutoff < SECONDARY_GROUP_SIZE) return;
+    const bucket = [];
+    for (let i = 0; i < cutoff; i += 1) {
+      const msg = msgs[i];
+      const compacted = msg.getAttribute(FLAG) === "1";
+      const expanded = msg.getAttribute(EXPANDED_LOCK_ATTR) === "1";
+      const grouped = msg.getAttribute(GROUP_MEMBER_ATTR) === "1";
+      const manualOpen = msg.getAttribute(GROUP_MANUAL_OPEN_ATTR) === "1";
+      if (!compacted || expanded || grouped || manualOpen) {
+        bucket.length = 0;
+        continue;
+      }
+      bucket.push(msg);
+      if (bucket.length === SECONDARY_GROUP_SIZE) {
+        createSecondaryGroup([...bucket]);
+        bucket.length = 0;
+      }
+    }
+  }
+
+  function scheduleSecondaryGrouping(delayMs = SECONDARY_GROUP_DELAY_MS) {
+    clearTimeout(secondaryGroupScheduled);
+    secondaryGroupScheduled = setTimeout(() => {
+      secondaryGroupScheduled = null;
+      runSecondaryGrouping();
+    }, delayMs);
+  }
+
+  function expandSecondaryGroup(groupId) {
+    if (!groupId) return;
+    const group = document.querySelector(`[${GROUP_ATTR}="1"][${GROUP_ID_ATTR}="${groupId}"]`);
+    const members = Array.from(document.querySelectorAll(`[${GROUP_MEMBER_ATTR}="1"][${GROUP_ID_ATTR}="${groupId}"]`));
+    for (const host of members) {
+      host.style.display = "";
+      host.removeAttribute(GROUP_MEMBER_ATTR);
+      host.removeAttribute(GROUP_ID_ATTR);
+      host.setAttribute(GROUP_MANUAL_OPEN_ATTR, "1");
+    }
+    if (group) {
+      group.remove();
+    }
+    scheduleFullIndexSync(80);
+  }
+
+  function clearSecondaryGroups() {
+    const members = Array.from(document.querySelectorAll(`[${GROUP_MEMBER_ATTR}="1"]`));
+    for (const host of members) {
+      host.style.display = "";
+      host.removeAttribute(GROUP_MEMBER_ATTR);
+      host.removeAttribute(GROUP_ID_ATTR);
+    }
+    const manualOpened = Array.from(document.querySelectorAll(`[${GROUP_MANUAL_OPEN_ATTR}]`));
+    for (const host of manualOpened) {
+      host.removeAttribute(GROUP_MANUAL_OPEN_ATTR);
+    }
+    const groups = Array.from(document.querySelectorAll(`[${GROUP_ATTR}="1"]`));
+    for (const group of groups) {
+      group.remove();
+    }
+  }
+
+  function regroupAllSecondaryGroups() {
+    const manualOpened = Array.from(document.querySelectorAll(`[${GROUP_MANUAL_OPEN_ATTR}]`));
+    for (const host of manualOpened) {
+      host.removeAttribute(GROUP_MANUAL_OPEN_ATTR);
+    }
+    scheduleSecondaryGrouping(20);
+  }
+
   function scheduleCompact(delayMs = OBSERVER_DELAY_MS) {
     clearTimeout(compactScheduled);
     compactScheduled = setTimeout(() => {
@@ -756,6 +905,7 @@
   function checkRouteChange() {
     const nextKey = `${location.pathname}${location.search}`;
     if (nextKey === routeKey) return false;
+    clearSecondaryGroups();
     routeKey = nextKey;
     bookmarks = loadBookmarks();
     rerenderBookmarkSelect();
@@ -798,6 +948,7 @@
     }
     if (compacted > 0) {
       scheduleFullIndexSync(80);
+      scheduleSecondaryGrouping(120);
     }
     maybeCompleteStartupStatus();
   }
@@ -938,6 +1089,14 @@
   }
 
   document.addEventListener("click", async (e) => {
+    const groupExpandBtn = e.target.closest('[data-mr-action="group-expand"]');
+    if (groupExpandBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      expandSecondaryGroup(groupExpandBtn.getAttribute("data-mr-group-id"));
+      return;
+    }
+
     const bookmarkPanel = e.target.closest(`#${BOOKMARK_PANEL_ID}`);
     if (bookmarkPanel) {
       const action = e.target.getAttribute("data-mr-action");
@@ -971,6 +1130,11 @@
         } else {
           showStatus(`書籤 #${index} 不存在`, "done");
         }
+        return;
+      }
+      if (action === "group-regroup-all") {
+        regroupAllSecondaryGroups();
+        showStatus("已手動重啟二級收合", "done");
       }
       return;
     }
@@ -1090,12 +1254,14 @@
       wasStreaming = false;
       scheduleFullIndexSync(80);
       scheduleCompact(60);
+      scheduleSecondaryGrouping(140);
     }
 
     const messageMutated = hasMessageMutation(records);
     if (routeChanged || messageMutated) {
       processAddedMessageHosts(records);
       scheduleFullIndexSync(INDEX_SYNC_DELAY_IDLE_MS);
+      scheduleSecondaryGrouping();
     }
     scheduleBookmarkPanelPosition();
     if (routeChanged || messageMutated) {
@@ -1115,6 +1281,7 @@
   syncAllMessageIndexLabels();
   ensureButtonsForExpandedMessages();
   runCompact();
+  scheduleSecondaryGrouping(200);
   observer.observe(document.body, { childList: true, subtree: true });
   setInterval(() => {
     const streaming = isStreamingNow();
@@ -1122,11 +1289,15 @@
       wasStreaming = false;
       scheduleFullIndexSync(80);
       scheduleCompact(60);
+      scheduleSecondaryGrouping(140);
     }
     checkRouteChange();
     updateBookmarkPanelPosition();
     if (!startupDone && !streaming) {
       runCompact();
+    }
+    if (!streaming) {
+      scheduleSecondaryGrouping();
     }
   }, PERIODIC_COMPACT_MS);
   window.addEventListener("resize", updateBookmarkPanelPosition);
