@@ -1067,6 +1067,9 @@
     host.classList.add(EXPANDED_CLASS);
     host.innerHTML = row.html;
 
+    const pos = resolveMessagePosition(host, row.messageIndex, row.totalMessages);
+    host.dataset.mrIndexLabel = indexLabelOf(pos.messageIndex, pos.totalMessages);
+    ensureStickyIndexBadge(host, host.dataset.mrIndexLabel || "?");
     ensureInlineCollapseButton(host);
   }
 
@@ -1087,6 +1090,7 @@
       host.removeAttribute(EXPANDED_LOCK_ATTR);
       host.setAttribute(FLAG, "1");
       host.innerHTML = compactUI(row.role, row.preview, existingId, pos.messageIndex, pos.totalMessages);
+      ensureStickyIndexBadge(host, host.dataset.mrIndexLabel || "?");
       if (focus) {
         focusMessageTop(host);
       }
