@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Memory Reducer (Expandable + IndexedDB)
 // @namespace    local.chatgpt.memory.reducer
-// @version      0.5.3
+// @version      0.5.4
 // @description  Compress old ChatGPT messages to reduce lag, with expandable restore from IndexedDB.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -26,6 +26,7 @@
   const STYLE_ID = "mr-style";
   const FLASH_CLASS = "mr-focus-flash";
   const FLASH_ANIM_MS = 1800;
+  const STATUS_ID = "mr-status";
   const SCROLL_BASE_MS = 350;
   const SCROLL_MS_PER_PX = 0.35;
   const SCROLL_MAX_MS = 1800;
@@ -35,6 +36,9 @@
   let compactScheduled = null;
   let compactInFlight = false;
   let flushScheduled = null;
+  let startupDone = false;
+  let statusTimer = null;
+  let statusDotPhase = 0;
 
   const hotCache = new Map();
   const writeQueue = [];
@@ -172,8 +176,83 @@
           box-shadow: 0 0 0 0 rgba(250, 204, 21, 0), 0 0 0 0 rgba(250, 204, 21, 0);
         }
       }
+      #${STATUS_ID} {
+        position: fixed;
+        right: 14px;
+        bottom: 14px;
+        z-index: 2147483647;
+        padding: 8px 12px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: .2px;
+        transition: opacity .22s ease, transform .22s ease;
+        opacity: 0;
+        transform: translateY(6px);
+        pointer-events: none;
+      }
+      #${STATUS_ID}.show {
+        opacity: 1;
+        transform: translateY(0);
+      }
+      #${STATUS_ID}.working {
+        color: #7c4a03;
+        border: 1px solid rgba(251, 191, 36, .65);
+        background: rgba(254, 243, 199, .95);
+      }
+      #${STATUS_ID}.done {
+        color: #065f46;
+        border: 1px solid rgba(16, 185, 129, .55);
+        background: rgba(209, 250, 229, .95);
+      }
     `;
     document.head.appendChild(style);
+  }
+
+  function ensureStatusNode() {
+    let node = document.getElementById(STATUS_ID);
+    if (node) return node;
+    node = document.createElement("div");
+    node.id = STATUS_ID;
+    document.body.appendChild(node);
+    return node;
+  }
+
+  function showStatus(text, type) {
+    const node = ensureStatusNode();
+    if (type === "working") {
+      startWorkingStatus(node, text);
+    } else {
+      stopWorkingStatus();
+      node.textContent = text;
+    }
+    node.className = `${type} show`;
+  }
+
+  function hideStatus() {
+    stopWorkingStatus();
+    const node = document.getElementById(STATUS_ID);
+    if (!node) return;
+    node.classList.remove("show");
+  }
+
+  function startWorkingStatus(node, baseText) {
+    const target = node || ensureStatusNode();
+    stopWorkingStatus();
+    statusDotPhase = 0;
+    const tick = () => {
+      const dots = ".".repeat(statusDotPhase);
+      target.textContent = `${baseText}${dots}`;
+      statusDotPhase = (statusDotPhase + 1) % 4;
+    };
+    tick();
+    statusTimer = setInterval(tick, 360);
+  }
+
+  function stopWorkingStatus() {
+    if (!statusTimer) return;
+    clearInterval(statusTimer);
+    statusTimer = null;
   }
 
   function getFlashTarget(host) {
@@ -270,6 +349,7 @@
     if (!writeQueue.length) return;
     const batch = writeQueue.splice(0, writeQueue.length);
     await idbPutMany(batch);
+    maybeCompleteStartupStatus();
   }
 
   function compactMessage(el) {
@@ -311,11 +391,15 @@
 
     const cutoff = msgs.length - KEEP_LATEST;
     let compacted = 0;
+    let pending = 0;
     for (let i = 0; i < cutoff; i += 1) {
       if (compacted >= MAX_COMPACT_PER_RUN) break;
       if (msgs[i].getAttribute(FLAG) === "1") continue;
       compactMessage(msgs[i]);
       compacted += 1;
+    }
+    for (let i = 0; i < cutoff; i += 1) {
+      if (msgs[i].getAttribute(FLAG) !== "1") pending += 1;
     }
 
     compactInFlight = false;
@@ -323,6 +407,30 @@
     if (compacted === MAX_COMPACT_PER_RUN) {
       scheduleCompact(30);
     }
+    if (pending > 0 && !startupDone) {
+      showStatus("收合中", "working");
+    }
+    maybeCompleteStartupStatus();
+  }
+
+  function maybeCompleteStartupStatus() {
+    if (startupDone) return;
+    const msgs = Array.from(document.querySelectorAll('[data-message-author-role]'));
+    const cutoff = Math.max(0, msgs.length - KEEP_LATEST);
+    let pending = 0;
+    for (let i = 0; i < cutoff; i += 1) {
+      if (msgs[i].getAttribute(FLAG) !== "1") {
+        pending += 1;
+        break;
+      }
+    }
+    if (pending > 0) return;
+    if (compactInFlight || compactScheduled || flushScheduled || writeQueue.length > 0) return;
+    startupDone = true;
+    showStatus("收合完成", "done");
+    setTimeout(() => {
+      hideStatus();
+    }, 2200);
   }
 
   function ensureButtonsForExpandedMessages() {
@@ -412,6 +520,7 @@
   });
 
   ensureStyles();
+  showStatus("收合中", "working");
   ensureButtonsForExpandedMessages();
   runCompact();
   observer.observe(document.body, { childList: true, subtree: true });
