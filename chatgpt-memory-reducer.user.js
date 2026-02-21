@@ -102,14 +102,30 @@
     return t.slice(0, PREVIEW_CHARS) + " …";
   }
 
-  function compactUI(role, preview, id) {
+  function compactUI(role, preview, id, messageIndex, totalMessages) {
+    const indexLabel =
+      Number.isInteger(messageIndex) && Number.isInteger(totalMessages)
+        ? `第 ${messageIndex}/${totalMessages} 則`
+        : "第 ? 則";
     return `
       <div class="mr-compact-card" style="border:1px solid rgba(128,128,128,.35);border-radius:10px;padding:10px 12px;background:rgba(127,127,127,.08)">
-        <div style="font-size:12px;opacity:.8;margin-bottom:6px">已壓縮 ${esc(role)} 訊息</div>
+        <div style="font-size:12px;opacity:.8;margin-bottom:6px">已壓縮 ${esc(role)} 訊息 (${indexLabel})</div>
         <div style="white-space:pre-wrap;font-size:13px;line-height:1.45">${esc(preview)}</div>
         <button class="mr-toggle" data-mr-action="expand" data-row-id="${id}" style="margin-top:8px">展開</button>
       </div>
     `;
+  }
+
+  function resolveMessagePosition(host, fallbackIndex, fallbackTotal) {
+    if (Number.isInteger(fallbackIndex) && Number.isInteger(fallbackTotal)) {
+      return { messageIndex: fallbackIndex, totalMessages: fallbackTotal };
+    }
+    const msgs = Array.from(document.querySelectorAll('[data-message-author-role]'));
+    const idx = host ? msgs.indexOf(host) : -1;
+    if (idx >= 0) {
+      return { messageIndex: idx + 1, totalMessages: msgs.length };
+    }
+    return { messageIndex: fallbackIndex, totalMessages: fallbackTotal };
   }
 
   function ensureInlineCollapseButton(host) {
@@ -354,19 +370,28 @@
     maybeCompleteStartupStatus();
   }
 
-  function compactMessage(el) {
+  function compactMessage(el, messageIndex, totalMessages) {
     if (!el || el.getAttribute(FLAG) === "1") return;
+    const pos = resolveMessagePosition(el, messageIndex, totalMessages);
 
     const id = `m_${Date.now()}_${seq++}`;
     const role = el.getAttribute("data-message-author-role") || "unknown";
     const snapshot = getMessageSnapshot(el);
     const html = snapshot.html;
     const preview = previewOf(snapshot.text);
-    const row = { id, role, preview, html, ts: Date.now() };
+    const row = {
+      id,
+      role,
+      preview,
+      html,
+      ts: Date.now(),
+      messageIndex: pos.messageIndex,
+      totalMessages: pos.totalMessages,
+    };
 
     el.dataset.mrId = id;
     el.setAttribute(FLAG, "1");
-    el.innerHTML = compactUI(role, preview, id);
+    el.innerHTML = compactUI(role, preview, id, row.messageIndex, row.totalMessages);
 
     putHotCache(row);
     writeQueue.push(row);
@@ -406,7 +431,7 @@
     for (let i = 0; i < cutoff; i += 1) {
       if (compacted >= MAX_COMPACT_PER_RUN) break;
       if (msgs[i].getAttribute(FLAG) === "1") continue;
-      compactMessage(msgs[i]);
+      compactMessage(msgs[i], i + 1, msgs.length);
       compacted += 1;
     }
     for (let i = 0; i < cutoff; i += 1) {
@@ -461,8 +486,9 @@
       }
       if (!row) return;
       putHotCache(row);
+      const pos = resolveMessagePosition(host, row.messageIndex, row.totalMessages);
       host.setAttribute(FLAG, "1");
-      host.innerHTML = compactUI(row.role, row.preview, existingId);
+      host.innerHTML = compactUI(row.role, row.preview, existingId, pos.messageIndex, pos.totalMessages);
       focusMessageTop(host);
       return;
     }
@@ -512,7 +538,8 @@
         `;
         ensureInlineCollapseButton(host);
       } else {
-        host.innerHTML = compactUI(row.role, row.preview, id);
+        const pos = resolveMessagePosition(host, row.messageIndex, row.totalMessages);
+        host.innerHTML = compactUI(row.role, row.preview, id, pos.messageIndex, pos.totalMessages);
         focusMessageTop(host);
       }
     } catch (err) {
