@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Memory Reducer (Expandable + IndexedDB)
 // @namespace    local.chatgpt.memory.reducer
-// @version      0.5.1
+// @version      0.5.2
 // @description  Compress old ChatGPT messages to reduce lag, with expandable restore from IndexedDB.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -24,6 +24,8 @@
   const STORE = "messages";
   const FLAG = "data-mr-compacted";
   const STYLE_ID = "mr-style";
+  const FLASH_CLASS = "mr-focus-flash";
+  const FLASH_ANIM_MS = 1200;
 
   let seq = 1;
   let dbPromise = null;
@@ -93,7 +95,7 @@
 
   function compactUI(role, preview, id) {
     return `
-      <div style="border:1px solid rgba(128,128,128,.35);border-radius:10px;padding:10px 12px;background:rgba(127,127,127,.08)">
+      <div class="mr-compact-card" style="border:1px solid rgba(128,128,128,.35);border-radius:10px;padding:10px 12px;background:rgba(127,127,127,.08)">
         <div style="font-size:12px;opacity:.8;margin-bottom:6px">已壓縮 ${esc(role)} 訊息</div>
         <div style="white-space:pre-wrap;font-size:13px;line-height:1.45">${esc(preview)}</div>
         <button class="mr-toggle" data-mr-action="expand" data-row-id="${id}" style="margin-top:8px">展開</button>
@@ -147,8 +149,44 @@
         overflow-wrap: anywhere;
         word-break: break-word;
       }
+      .${FLASH_CLASS} {
+        position: relative;
+        border-color: rgba(250, 204, 21, 0.95) !important;
+        background: rgba(250, 204, 21, 0.18) !important;
+        box-shadow: 0 0 0 2px rgba(250, 204, 21, 0.95), 0 0 0 10px rgba(250, 204, 21, 0.24);
+        border-radius: 12px;
+        animation: mr-focus-fade ${FLASH_ANIM_MS}ms ease-out forwards;
+      }
+      @keyframes mr-focus-fade {
+        0% {
+          border-color: rgba(250, 204, 21, 0.95);
+          background: rgba(250, 204, 21, 0.18);
+          box-shadow: 0 0 0 2px rgba(250, 204, 21, 0.95), 0 0 0 10px rgba(250, 204, 21, 0.24);
+        }
+        100% {
+          border-color: rgba(128, 128, 128, 0.35);
+          background: rgba(127, 127, 127, 0.08);
+          box-shadow: 0 0 0 0 rgba(250, 204, 21, 0), 0 0 0 0 rgba(250, 204, 21, 0);
+        }
+      }
     `;
     document.head.appendChild(style);
+  }
+
+  function getFlashTarget(host) {
+    if (!host) return null;
+    return host.querySelector(".mr-compact-card") || host;
+  }
+
+  function flashMessage(host) {
+    const target = getFlashTarget(host);
+    if (!target) return;
+    target.classList.remove(FLASH_CLASS);
+    void target.offsetWidth;
+    target.classList.add(FLASH_CLASS);
+    setTimeout(() => {
+      target.classList.remove(FLASH_CLASS);
+    }, FLASH_ANIM_MS + 80);
   }
 
   function focusMessageTop(host) {
@@ -157,6 +195,7 @@
       host.scrollIntoView({ behavior: "smooth", block: "start", inline: "nearest" });
       requestAnimationFrame(() => {
         window.scrollBy({ top: -COLLAPSE_SCROLL_TOP_OFFSET, left: 0, behavior: "auto" });
+        flashMessage(host);
       });
     });
   }
