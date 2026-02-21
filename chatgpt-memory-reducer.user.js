@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Memory Reducer (Expandable + IndexedDB)
 // @namespace    local.chatgpt.memory.reducer
-// @version      0.5.0
+// @version      0.5.1
 // @description  Compress old ChatGPT messages to reduce lag, with expandable restore from IndexedDB.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -19,6 +19,7 @@
   const PERIODIC_COMPACT_MS = 1500;
   const FLUSH_DELAY_MS = 120;
   const HOT_CACHE_LIMIT = 8;
+  const COLLAPSE_SCROLL_TOP_OFFSET = 72;
   const DB_NAME = "chatgpt-memory-reducer";
   const STORE = "messages";
   const FLAG = "data-mr-compacted";
@@ -150,6 +151,16 @@
     document.head.appendChild(style);
   }
 
+  function focusMessageTop(host) {
+    if (!host) return;
+    requestAnimationFrame(() => {
+      host.scrollIntoView({ behavior: "smooth", block: "start", inline: "nearest" });
+      requestAnimationFrame(() => {
+        window.scrollBy({ top: -COLLAPSE_SCROLL_TOP_OFFSET, left: 0, behavior: "auto" });
+      });
+    });
+  }
+
   function putHotCache(row) {
     if (!row || !row.id) return;
     if (hotCache.has(row.id)) {
@@ -248,9 +259,11 @@
       putHotCache(row);
       host.setAttribute(FLAG, "1");
       host.innerHTML = compactUI(row.role, row.preview, existingId);
+      focusMessageTop(host);
       return;
     }
     compactMessage(host);
+    focusMessageTop(host);
   }
 
   document.addEventListener("click", async (e) => {
@@ -296,6 +309,7 @@
         ensureInlineCollapseButton(host);
       } else {
         host.innerHTML = compactUI(row.role, row.preview, id);
+        focusMessageTop(host);
       }
     } catch (err) {
       console.error("[MR] toggle failed:", err);
