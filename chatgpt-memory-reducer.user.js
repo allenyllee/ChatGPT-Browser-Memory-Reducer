@@ -3,6 +3,7 @@
 // @namespace    local.chatgpt.memory.reducer
 // @version      0.5.4
 // @description  Compress old ChatGPT messages to reduce lag, with expandable restore from IndexedDB.
+// @author       allenyllee
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
 // @run-at       document-idle
