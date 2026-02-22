@@ -473,17 +473,6 @@
     return true;
   }
 
-  function removeAllBookmarkEmojis(index) {
-    if (!Number.isInteger(index) || index <= 0) return false;
-    const key = String(index);
-    if (!bookmarksByIndex[key]) return false;
-    delete bookmarksByIndex[key];
-    saveBookmarks();
-    rerenderBookmarkDecorations();
-    scheduleBookmarkFilterApply(40);
-    return true;
-  }
-
   function getDefaultBookmarkEmoji() {
     return bookmarkEmojiCatalog[0] || DEFAULT_BOOKMARK_EMOJIS[0];
   }
@@ -559,7 +548,6 @@
         <select id="${BOOKMARK_SELECT_ID}"></select>
         <button type="button" data-mr-action="bookmark-collapse-visible">收合已展開</button>
         <button type="button" data-mr-action="bookmark-filter-menu">篩選</button>
-        <button type="button" data-mr-action="bookmark-remove">清空類別</button>
       `;
       document.body.appendChild(panel);
     }
@@ -1759,20 +1747,6 @@
           showStatus(`#${index} 已有預設書籤`, "done");
         }
         if (input) input.value = "";
-        return;
-      }
-      if (action === "bookmark-remove") {
-        const select = document.getElementById(BOOKMARK_SELECT_ID);
-        const index = Number(select && select.value);
-        if (!Number.isInteger(index) || index <= 0) {
-          showStatus("請先選擇書籤", "done");
-          return;
-        }
-        if (removeAllBookmarkEmojis(index)) {
-          showStatus(`已清空 #${index} 的書籤類別`, "done");
-        } else {
-          showStatus(`#${index} 沒有書籤可清空`, "done");
-        }
         return;
       }
       if (action === "bookmark-filter-menu") {
