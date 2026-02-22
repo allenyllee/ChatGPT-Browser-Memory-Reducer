@@ -1335,11 +1335,35 @@
     return `${firstPos.messageIndex}-${lastPos.messageIndex}`;
   }
 
+  function getMessageDisplayNode(host) {
+    if (!host) return null;
+    const article = host.closest("article");
+    return article || host;
+  }
+
+  function setMessageHidden(host, hidden) {
+    if (!host) return;
+    const displayNode = getMessageDisplayNode(host);
+    if (displayNode && displayNode !== host) {
+      displayNode.style.display = hidden ? "none" : "";
+    }
+    host.style.display = hidden ? "none" : "";
+  }
+
+  function insertGroupBeforeHost(group, host) {
+    if (!group || !host) return false;
+    const displayNode = getMessageDisplayNode(host) || host;
+    const parent = displayNode.parentElement || host.parentElement;
+    if (!parent) return false;
+    parent.insertBefore(group, displayNode);
+    return true;
+  }
+
   function clearBookmarkFilterGroups(options = {}) {
     const dropManualOpen = options.dropManualOpen !== false;
     const members = Array.from(document.querySelectorAll(`[${FILTER_GROUP_MEMBER_ATTR}="1"]`));
     for (const host of members) {
-      host.style.display = "";
+      setMessageHidden(host, false);
       host.removeAttribute(FILTER_GROUP_MEMBER_ATTR);
       host.removeAttribute(FILTER_GROUP_ID_ATTR);
     }
@@ -1358,7 +1382,7 @@
   function createBookmarkFilterGroup(hosts) {
     if (!hosts || !hosts.length) return;
     const first = hosts[0];
-    if (!first || !first.parentElement) return;
+    if (!first) return;
     const groupId = `fg_${Date.now()}_${seq++}`;
     const rangeLabel = getGroupRangeLabel(hosts);
     const group = document.createElement("div");
@@ -1371,11 +1395,11 @@
         <button type="button" data-mr-action="filter-group-expand" data-mr-filter-group-id="${groupId}">展開此區段</button>
       </div>
     `;
-    first.parentElement.insertBefore(group, first);
+    if (!insertGroupBeforeHost(group, first)) return;
     for (const host of hosts) {
       host.setAttribute(FILTER_GROUP_MEMBER_ATTR, "1");
       host.setAttribute(FILTER_GROUP_ID_ATTR, groupId);
-      host.style.display = "none";
+      setMessageHidden(host, true);
     }
   }
 
@@ -1384,7 +1408,7 @@
     const group = document.querySelector(`[${FILTER_GROUP_ATTR}="1"][${FILTER_GROUP_ID_ATTR}="${groupId}"]`);
     const members = Array.from(document.querySelectorAll(`[${FILTER_GROUP_MEMBER_ATTR}="1"][${FILTER_GROUP_ID_ATTR}="${groupId}"]`));
     for (const host of members) {
-      host.style.display = "";
+      setMessageHidden(host, false);
       host.removeAttribute(FILTER_GROUP_MEMBER_ATTR);
       host.removeAttribute(FILTER_GROUP_ID_ATTR);
       host.setAttribute(FILTER_GROUP_MANUAL_OPEN_ATTR, "1");
@@ -1437,7 +1461,7 @@
           createBookmarkFilterGroup([...hiddenBucket]);
           hiddenBucket.length = 0;
         }
-        host.style.display = "";
+        setMessageHidden(host, false);
         continue;
       }
       if (host.getAttribute(FLAG) !== "1") {
@@ -1467,7 +1491,7 @@
   function createSecondaryGroup(hosts) {
     if (!hosts || hosts.length < SECONDARY_GROUP_SIZE) return;
     const first = hosts[0];
-    if (!first || !first.parentElement) return;
+    if (!first) return;
     const groupId = `g_${Date.now()}_${seq++}`;
     const rangeLabel = getGroupRangeLabel(hosts);
     const group = document.createElement("div");
@@ -1480,11 +1504,11 @@
         <button type="button" data-mr-action="group-expand" data-mr-group-id="${groupId}">展開此群組</button>
       </div>
     `;
-    first.parentElement.insertBefore(group, first);
+    if (!insertGroupBeforeHost(group, first)) return;
     for (const host of hosts) {
       host.setAttribute(GROUP_MEMBER_ATTR, "1");
       host.setAttribute(GROUP_ID_ATTR, groupId);
-      host.style.display = "none";
+      setMessageHidden(host, true);
     }
   }
 
@@ -1526,7 +1550,7 @@
     const group = document.querySelector(`[${GROUP_ATTR}="1"][${GROUP_ID_ATTR}="${groupId}"]`);
     const members = Array.from(document.querySelectorAll(`[${GROUP_MEMBER_ATTR}="1"][${GROUP_ID_ATTR}="${groupId}"]`));
     for (const host of members) {
-      host.style.display = "";
+      setMessageHidden(host, false);
       host.removeAttribute(GROUP_MEMBER_ATTR);
       host.removeAttribute(GROUP_ID_ATTR);
       host.setAttribute(GROUP_MANUAL_OPEN_ATTR, "1");
@@ -1540,7 +1564,7 @@
   function clearSecondaryGroups() {
     const members = Array.from(document.querySelectorAll(`[${GROUP_MEMBER_ATTR}="1"]`));
     for (const host of members) {
-      host.style.display = "";
+      setMessageHidden(host, false);
       host.removeAttribute(GROUP_MEMBER_ATTR);
       host.removeAttribute(GROUP_ID_ATTR);
     }
