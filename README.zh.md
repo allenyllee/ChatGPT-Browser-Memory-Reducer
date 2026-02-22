@@ -74,7 +74,8 @@
   - `mr-bookmark-emoji-catalog:v1`：emoji 類別清單
   - `mr-bookmark-filter-selection:v1`：篩選選取狀態
 
-> `<route>` 是 `pathname + search`，代表不同對話 URL 會有不同書籤集合。
+> `<route>` 是 canonical route key。對話頁會使用 `c:<conversationId>`（從 `/c/<id>` 取得），因此 query 參數改變不會把書籤拆成不同集合。
+> 開啟該對話時，舊版 route key 的書籤會自動合併到 canonical key。
 
 ## 可調參數（進階）
 

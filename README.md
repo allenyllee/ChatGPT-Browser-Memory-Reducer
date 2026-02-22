@@ -76,7 +76,8 @@ This script stores data locally in your browser only; it does not upload message
   - `mr-bookmark-emoji-catalog:v1`: emoji category catalog
   - `mr-bookmark-filter-selection:v1`: selected filter categories
 
-`<route>` means `pathname + search`, so different conversation URLs keep separate bookmark sets.
+`<route>` is a canonical route key. For conversation pages it uses `c:<conversationId>` (from `/c/<id>`), so query-string changes do not split bookmark sets.
+Legacy bookmark keys are auto-merged into the canonical route key when that conversation is opened.
 
 ## Tunable Constants (Advanced)
 
