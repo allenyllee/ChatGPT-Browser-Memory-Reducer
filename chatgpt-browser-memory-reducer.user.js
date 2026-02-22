@@ -25,8 +25,6 @@
   const INDEX_SYNC_DELAY_IDLE_MS = 300;
   const INDEX_SYNC_DELAY_STREAMING_MS = 1200;
   const PANEL_REPOSITION_DELAY_MS = 120;
-  const SECONDARY_GROUP_SIZE = 10;
-  const SECONDARY_GROUP_DELAY_MS = 260;
   const COLLAPSE_SCROLL_TOP_OFFSET = 72;
   const DB_NAME = "chatgpt-browser-memory-reducer";
   const STORE = "messages";
@@ -53,10 +51,6 @@
   const INDEX_ADD_ATTR = "data-mr-index-add";
   const INDEX_EMOJI_ROW_ATTR = "data-mr-index-emoji-row";
   const INDEX_VALUE_ATTR = "data-mr-index-value";
-  const GROUP_ATTR = "data-mr-group";
-  const GROUP_ID_ATTR = "data-mr-group-id";
-  const GROUP_MEMBER_ATTR = "data-mr-group-member";
-  const GROUP_MANUAL_OPEN_ATTR = "data-mr-group-manual-open";
   const FILTER_GROUP_ATTR = "data-mr-filter-group";
   const FILTER_GROUP_ID_ATTR = "data-mr-filter-group-id";
   const FILTER_GROUP_MEMBER_ATTR = "data-mr-filter-group-member";
@@ -74,7 +68,6 @@
   let compactScheduled = null;
   let compactInFlight = false;
   let fullIndexSyncScheduled = null;
-  let secondaryGroupScheduled = null;
   let bookmarkFilterScheduled = null;
   let bookmarkFilterResetManualPending = false;
   let flushScheduled = null;
@@ -550,11 +543,6 @@
       const refreshed = Array.from(document.querySelectorAll('[data-message-author-role]'));
       target = refreshed[index - 1];
     }
-    if (target && target.getAttribute(GROUP_MEMBER_ATTR) === "1") {
-      expandSecondaryGroup(target.getAttribute(GROUP_ID_ATTR));
-      const refreshed = Array.from(document.querySelectorAll('[data-message-author-role]'));
-      target = refreshed[index - 1];
-    }
     if (!target) return false;
     focusMessageTop(target);
     return true;
@@ -572,7 +560,6 @@
         <button type="button" data-mr-action="bookmark-collapse-visible">收合已展開</button>
         <button type="button" data-mr-action="bookmark-filter-menu">篩選</button>
         <button type="button" data-mr-action="bookmark-remove">清空類別</button>
-        <button type="button" data-mr-action="group-regroup-all">重收合</button>
       `;
       document.body.appendChild(panel);
     }
@@ -606,7 +593,6 @@
     renderBookmarkFilterMenu();
     updateBookmarkFilterButtonLabel();
     scheduleBookmarkFilterApply(40, { resetManualOpen: true });
-    scheduleSecondaryGrouping(120);
     if (options.showStatus !== false) {
       showStatus("已套用：僅顯示所有書籤類別 + 最後 10 筆", "done");
     }
@@ -618,7 +604,6 @@
     renderBookmarkFilterMenu();
     updateBookmarkFilterButtonLabel();
     scheduleBookmarkFilterApply(40, { resetManualOpen: true });
-    scheduleSecondaryGrouping(120);
     if (options.showStatus !== false) {
       showStatus("已套用：顯示全部訊息", "done");
     }
@@ -637,7 +622,6 @@
     }
     if (collapsed > 0 || hadManualFilterOpen) {
       scheduleFullIndexSync(60);
-      scheduleSecondaryGrouping(80);
       scheduleBookmarkFilterApply(80, { resetManualOpen: true });
     }
     return { collapsed, regrouped: hadManualFilterOpen };
@@ -1149,35 +1133,6 @@
         background: rgba(255, 255, 255, 0.88);
         cursor: pointer;
       }
-      [${GROUP_ATTR}="1"] {
-        margin: 8px auto;
-        max-width: min(920px, calc(100% - 24px));
-        border: 1px dashed rgba(148, 163, 184, 0.7);
-        border-radius: 10px;
-        background: rgba(148, 163, 184, 0.12);
-        padding: 10px 12px;
-        color: inherit;
-      }
-      [${GROUP_ATTR}="1"] .mr-group-meta {
-        font-size: 12px;
-        opacity: .82;
-        margin-bottom: 6px;
-      }
-      [${GROUP_ATTR}="1"] .mr-group-title {
-        font-size: 13px;
-        line-height: 1.4;
-      }
-      [${GROUP_ATTR}="1"] .mr-group-actions {
-        margin-top: 8px;
-      }
-      [${GROUP_ATTR}="1"] button {
-        font-size: 12px;
-        padding: 4px 9px;
-        border-radius: 8px;
-        border: 1px solid rgba(128, 128, 128, 0.45);
-        background: rgba(255, 255, 255, 0.85);
-        cursor: pointer;
-      }
       @media (max-width: 900px) {
         #${BOOKMARK_PANEL_ID} {
           right: 8px;
@@ -1498,7 +1453,6 @@
       }
       return;
     }
-    clearSecondaryGroups();
     const msgs = Array.from(document.querySelectorAll('[data-message-author-role]'));
     const total = msgs.length;
     const hiddenBucket = [];
@@ -1537,109 +1491,6 @@
     }, delayMs);
   }
 
-  function createSecondaryGroup(hosts) {
-    if (!hosts || hosts.length < SECONDARY_GROUP_SIZE) return;
-    const first = hosts[0];
-    if (!first) return;
-    const groupId = `g_${Date.now()}_${seq++}`;
-    const rangeLabel = getGroupRangeLabel(hosts);
-    const group = document.createElement("div");
-    group.setAttribute(GROUP_ATTR, "1");
-    group.setAttribute(GROUP_ID_ATTR, groupId);
-    group.innerHTML = `
-      <div class="mr-group-meta">二級收合（${hosts.length} 則）</div>
-      <div class="mr-group-title">已群組第 ${esc(rangeLabel)} 則訊息，降低渲染負擔</div>
-      <div class="mr-group-actions">
-        <button type="button" data-mr-action="group-expand" data-mr-group-id="${groupId}">展開此群組</button>
-      </div>
-    `;
-    if (!insertGroupBeforeHost(group, first)) return;
-    for (const host of hosts) {
-      host.setAttribute(GROUP_MEMBER_ATTR, "1");
-      host.setAttribute(GROUP_ID_ATTR, groupId);
-      setMessageHidden(host, true);
-    }
-  }
-
-  function runSecondaryGrouping() {
-    if (isStreamingNow()) return;
-    if (isBookmarkFilterActive()) return;
-    const msgs = Array.from(document.querySelectorAll('[data-message-author-role]'));
-    const cutoff = Math.max(0, msgs.length - KEEP_LATEST);
-    if (cutoff < SECONDARY_GROUP_SIZE) return;
-    const bucket = [];
-    for (let i = 0; i < cutoff; i += 1) {
-      const msg = msgs[i];
-      const compacted = msg.getAttribute(FLAG) === "1";
-      const expanded = msg.getAttribute(EXPANDED_LOCK_ATTR) === "1";
-      const grouped = msg.getAttribute(GROUP_MEMBER_ATTR) === "1";
-      const manualOpen = msg.getAttribute(GROUP_MANUAL_OPEN_ATTR) === "1";
-      if (!compacted || expanded || grouped || manualOpen) {
-        bucket.length = 0;
-        continue;
-      }
-      bucket.push(msg);
-      if (bucket.length === SECONDARY_GROUP_SIZE) {
-        createSecondaryGroup([...bucket]);
-        bucket.length = 0;
-      }
-    }
-  }
-
-  function scheduleSecondaryGrouping(delayMs = SECONDARY_GROUP_DELAY_MS) {
-    clearTimeout(secondaryGroupScheduled);
-    secondaryGroupScheduled = setTimeout(() => {
-      secondaryGroupScheduled = null;
-      runSecondaryGrouping();
-    }, delayMs);
-  }
-
-  function expandSecondaryGroup(groupId) {
-    if (!groupId) return;
-    const group = document.querySelector(`[${GROUP_ATTR}="1"][${GROUP_ID_ATTR}="${groupId}"]`);
-    const members = Array.from(document.querySelectorAll(`[${GROUP_MEMBER_ATTR}="1"][${GROUP_ID_ATTR}="${groupId}"]`));
-    for (const host of members) {
-      setMessageHidden(host, false);
-      host.removeAttribute(GROUP_MEMBER_ATTR);
-      host.removeAttribute(GROUP_ID_ATTR);
-      host.setAttribute(GROUP_MANUAL_OPEN_ATTR, "1");
-    }
-    if (group) {
-      group.remove();
-    }
-    scheduleFullIndexSync(80);
-  }
-
-  function clearSecondaryGroups() {
-    const members = Array.from(document.querySelectorAll(`[${GROUP_MEMBER_ATTR}="1"]`));
-    for (const host of members) {
-      setMessageHidden(host, false);
-      host.removeAttribute(GROUP_MEMBER_ATTR);
-      host.removeAttribute(GROUP_ID_ATTR);
-    }
-    const manualOpened = Array.from(document.querySelectorAll(`[${GROUP_MANUAL_OPEN_ATTR}]`));
-    for (const host of manualOpened) {
-      host.removeAttribute(GROUP_MANUAL_OPEN_ATTR);
-    }
-    const groups = Array.from(document.querySelectorAll(`[${GROUP_ATTR}="1"]`));
-    for (const group of groups) {
-      group.remove();
-    }
-  }
-
-  async function regroupAllSecondaryGroups() {
-    const expandedHosts = Array.from(document.querySelectorAll(`[${EXPANDED_LOCK_ATTR}="1"]`));
-    for (const host of expandedHosts) {
-      await collapseExpandedMessage(host, { focus: false });
-    }
-    const manualOpened = Array.from(document.querySelectorAll(`[${GROUP_MANUAL_OPEN_ATTR}]`));
-    for (const host of manualOpened) {
-      host.removeAttribute(GROUP_MANUAL_OPEN_ATTR);
-    }
-    scheduleFullIndexSync(80);
-    scheduleSecondaryGrouping(20);
-  }
-
   function scheduleCompact(delayMs = OBSERVER_DELAY_MS) {
     clearTimeout(compactScheduled);
     compactScheduled = setTimeout(() => {
@@ -1651,7 +1502,6 @@
   function checkRouteChange() {
     const nextKey = `${location.pathname}${location.search}`;
     if (nextKey === routeKey) return false;
-    clearSecondaryGroups();
     clearBookmarkFilterGroups({ dropManualOpen: true });
     routeKey = nextKey;
     bookmarksByIndex = loadBookmarks();
@@ -1699,7 +1549,6 @@
     }
     if (compacted > 0) {
       scheduleFullIndexSync(80);
-      scheduleSecondaryGrouping(120);
       scheduleBookmarkFilterApply(100);
     }
     maybeCompleteStartupStatus();
@@ -1866,14 +1715,6 @@
       return;
     }
 
-    const groupExpandBtn = e.target.closest('[data-mr-action="group-expand"]');
-    if (groupExpandBtn) {
-      e.preventDefault();
-      e.stopPropagation();
-      expandSecondaryGroup(groupExpandBtn.getAttribute("data-mr-group-id"));
-      return;
-    }
-
     const filterGroupExpandBtn = e.target.closest('[data-mr-action="filter-group-expand"]');
     if (filterGroupExpandBtn) {
       e.preventDefault();
@@ -1955,10 +1796,6 @@
           showStatus("目前沒有可收合的展開訊息", "done");
         }
         return;
-      }
-      if (action === "group-regroup-all") {
-        await regroupAllSecondaryGroups();
-        showStatus("已手動重啟二級收合", "done");
       }
       return;
     }
@@ -2074,7 +1911,6 @@
       saveBookmarkFilterSelection();
       updateBookmarkFilterButtonLabel();
       scheduleBookmarkFilterApply(40, { resetManualOpen: true });
-      scheduleSecondaryGrouping(120);
       if (!bookmarkFilterSelected.size) {
         showStatus("篩選已清空，顯示全部訊息", "done");
       } else {
@@ -2126,7 +1962,6 @@
       wasStreaming = false;
       scheduleFullIndexSync(80);
       scheduleCompact(60);
-      scheduleSecondaryGrouping(140);
       scheduleBookmarkFilterApply(100);
     }
 
@@ -2134,7 +1969,6 @@
     if (routeChanged || messageMutated) {
       processAddedMessageHosts(records);
       scheduleFullIndexSync(INDEX_SYNC_DELAY_IDLE_MS);
-      scheduleSecondaryGrouping();
       scheduleBookmarkFilterApply(routeChanged ? 120 : 100, { resetManualOpen: routeChanged });
     }
     scheduleBookmarkPanelPosition();
@@ -2159,7 +1993,6 @@
   syncAllMessageIndexLabels();
   ensureButtonsForExpandedMessages();
   runCompact();
-  scheduleSecondaryGrouping(200);
   scheduleBookmarkFilterApply(220, { resetManualOpen: true });
   observer.observe(document.body, { childList: true, subtree: true });
   setInterval(() => {
@@ -2168,7 +2001,6 @@
       wasStreaming = false;
       scheduleFullIndexSync(80);
       scheduleCompact(60);
-      scheduleSecondaryGrouping(140);
       scheduleBookmarkFilterApply(100);
     }
     checkRouteChange();
@@ -2177,7 +2009,6 @@
       runCompact();
     }
     if (!streaming) {
-      scheduleSecondaryGrouping();
       scheduleBookmarkFilterApply(180);
     }
   }, PERIODIC_COMPACT_MS);
