@@ -20,7 +20,7 @@
   const PREVIEW_CHARS = 320;
   const MAX_COMPACT_PER_RUN = 10;
   const OBSERVER_DELAY_MS = 180;
-  const PERIODIC_COMPACT_MS = 1500;
+  const PERIODIC_COMPACT_MS = 4000;
   const FLUSH_DELAY_MS = 120;
   const HOT_CACHE_LIMIT = 8;
   const INDEX_SYNC_DELAY_IDLE_MS = 300;
@@ -192,6 +192,7 @@
   let bookmarkPanelPositionScheduled = null;
   let wasStreaming = false;
   let startupDone = false;
+  let maybeHasPendingCompaction = true;
   let routeKey = `${location.pathname}${location.search}`;
   let statusTimer = null;
   let statusDotPhase = 0;
@@ -521,6 +522,14 @@
 
   function isBookmarkFilterActive() {
     return Boolean(bookmarkFilterSelected && bookmarkFilterSelected.size > 0);
+  }
+
+  function hasBookmarkFilterArtifacts() {
+    return Boolean(
+      document.querySelector(`[${FILTER_GROUP_ATTR}="1"]`) ||
+        document.querySelector(`[${FILTER_GROUP_MEMBER_ATTR}="1"]`) ||
+        document.querySelector(`[${FILTER_GROUP_MANUAL_OPEN_ATTR}="1"]`)
+    );
   }
 
   function reconcileBookmarkFilterSelection(previousCatalog = []) {
@@ -1598,16 +1607,25 @@
     if (options.resetManualOpen) {
       bookmarkFilterResetManualPending = true;
     }
+    if (!bookmarkFilterResetManualPending && !isBookmarkFilterActive() && !hasBookmarkFilterArtifacts()) {
+      return;
+    }
     clearTimeout(bookmarkFilterScheduled);
     bookmarkFilterScheduled = setTimeout(() => {
       bookmarkFilterScheduled = null;
       const resetManualOpen = bookmarkFilterResetManualPending;
       bookmarkFilterResetManualPending = false;
+      if (!resetManualOpen && !isBookmarkFilterActive() && !hasBookmarkFilterArtifacts()) {
+        return;
+      }
       applyBookmarkFilter({ resetManualOpen });
     }, delayMs);
   }
 
   function scheduleCompact(delayMs = OBSERVER_DELAY_MS) {
+    if (startupDone && !maybeHasPendingCompaction) {
+      return;
+    }
     clearTimeout(compactScheduled);
     compactScheduled = setTimeout(() => {
       compactScheduled = null;
@@ -1626,6 +1644,7 @@
     closeBookmarkFilterMenu();
     rerenderBookmarkDecorations();
     startupDone = false;
+    maybeHasPendingCompaction = true;
     showStatus(t("statusCompacting"), "working");
     scheduleCompact(30);
     scheduleBookmarkFilterApply(60, { resetManualOpen: true });
@@ -1648,12 +1667,14 @@
     for (let i = 0; i < cutoff; i += 1) {
       if (compacted >= MAX_COMPACT_PER_RUN) break;
       if (msgs[i].getAttribute(FLAG) === "1") continue;
+      if (msgs[i].getAttribute(EXPANDED_LOCK_ATTR) === "1") continue;
       compactMessage(msgs[i], i + 1, msgs.length);
       compacted += 1;
     }
     for (let i = 0; i < cutoff; i += 1) {
-      if (msgs[i].getAttribute(FLAG) !== "1") pending += 1;
+      if (msgs[i].getAttribute(FLAG) !== "1" && msgs[i].getAttribute(EXPANDED_LOCK_ATTR) !== "1") pending += 1;
     }
+    maybeHasPendingCompaction = pending > 0;
 
     compactInFlight = false;
 
@@ -1676,7 +1697,7 @@
     const cutoff = Math.max(0, msgs.length - KEEP_LATEST);
     let pending = 0;
     for (let i = 0; i < cutoff; i += 1) {
-      if (msgs[i].getAttribute(FLAG) !== "1") {
+      if (msgs[i].getAttribute(FLAG) !== "1" && msgs[i].getAttribute(EXPANDED_LOCK_ATTR) !== "1") {
         pending += 1;
         break;
       }
@@ -2122,6 +2143,7 @@
 
     if (wasStreaming) {
       wasStreaming = false;
+      maybeHasPendingCompaction = true;
       scheduleFullIndexSync(80);
       scheduleCompact(60);
       scheduleBookmarkFilterApply(100);
@@ -2129,6 +2151,7 @@
 
     const messageMutated = hasMessageMutation(records);
     if (routeChanged || messageMutated) {
+      maybeHasPendingCompaction = true;
       processAddedMessageHosts(records);
       scheduleFullIndexSync(INDEX_SYNC_DELAY_IDLE_MS);
       scheduleBookmarkFilterApply(routeChanged ? 120 : 100, { resetManualOpen: routeChanged });
@@ -2161,6 +2184,7 @@
     const streaming = isStreamingNow();
     if (!streaming && wasStreaming) {
       wasStreaming = false;
+      maybeHasPendingCompaction = true;
       scheduleFullIndexSync(80);
       scheduleCompact(60);
       scheduleBookmarkFilterApply(100);
