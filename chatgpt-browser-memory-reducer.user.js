@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Browser Memory Reducer (Expandable + IndexedDB)
 // @namespace    local.chatgpt.browser.memory.reducer
-// @version      0.8.0
+// @version      0.9.0
 // @description  Compress old ChatGPT messages to reduce browser memory usage and lag, with expandable restore from IndexedDB.
 // @author       allenyllee
 // @downloadURL  https://gist.github.com/b1e7051e064b4ad8084efa16edc4fbf8/raw/chatgpt-browser-memory-reducer.user.js
@@ -44,6 +44,9 @@
   const BOOKMARK_EMOJI_CHECK_ATTR = "data-mr-bookmark-emoji-check";
   const BOOKMARK_EMOJI_ITEM_ATTR = "data-mr-bookmark-emoji";
   const BOOKMARK_PANEL_MIN_BOTTOM = 56;
+  const BOOKMARK_FILTER_MENU_ID = "mr-bookmark-filter-menu";
+  const BOOKMARK_FILTER_CHECK_ATTR = "data-mr-bookmark-filter-check";
+  const BOOKMARK_FILTER_ITEM_ATTR = "data-mr-bookmark-filter-item";
   const INDEX_TOOLS_ATTR = "data-mr-index-tools";
   const INDEX_TOP_ATTR = "data-mr-index-top";
   const INDEX_BADGE_ATTR = "data-mr-index-badge";
@@ -54,6 +57,10 @@
   const GROUP_ID_ATTR = "data-mr-group-id";
   const GROUP_MEMBER_ATTR = "data-mr-group-member";
   const GROUP_MANUAL_OPEN_ATTR = "data-mr-group-manual-open";
+  const FILTER_GROUP_ATTR = "data-mr-filter-group";
+  const FILTER_GROUP_ID_ATTR = "data-mr-filter-group-id";
+  const FILTER_GROUP_MEMBER_ATTR = "data-mr-filter-group-member";
+  const FILTER_GROUP_MANUAL_OPEN_ATTR = "data-mr-filter-group-manual-open";
   const EXPANDED_CLASS = "mr-expanded-host";
   const EXPANDED_LOCK_ATTR = "data-mr-expanded-lock";
   const SCROLL_BASE_MS = 350;
@@ -68,6 +75,8 @@
   let compactInFlight = false;
   let fullIndexSyncScheduled = null;
   let secondaryGroupScheduled = null;
+  let bookmarkFilterScheduled = null;
+  let bookmarkFilterResetManualPending = false;
   let flushScheduled = null;
   let bookmarkPanelPositionScheduled = null;
   let wasStreaming = false;
@@ -77,6 +86,7 @@
   let statusDotPhase = 0;
   let bookmarksByIndex = {};
   let bookmarkEmojiCatalog = [...DEFAULT_BOOKMARK_EMOJIS];
+  let bookmarkFilterSelected = new Set();
   let bookmarkMenuIndex = null;
 
   const hotCache = new Map();
@@ -257,6 +267,10 @@
     return "mr-bookmark-emoji-catalog:v1";
   }
 
+  function getBookmarkFilterStorageKey() {
+    return "mr-bookmark-filter-selection:v1";
+  }
+
   function normalizeEmojiTag(raw) {
     const value = String(raw || "").trim();
     if (!value) return "";
@@ -327,6 +341,7 @@
   }
 
   function mergeUsedEmojisIntoCatalog() {
+    const previousCatalog = [...bookmarkEmojiCatalog];
     let changed = false;
     const seen = new Set(bookmarkEmojiCatalog);
     for (const emojis of Object.values(bookmarksByIndex)) {
@@ -341,6 +356,7 @@
     }
     if (changed) {
       saveEmojiCatalog();
+      reconcileBookmarkFilterSelection(previousCatalog);
     }
   }
 
@@ -361,6 +377,57 @@
     } catch (err) {
       console.warn("[MR] save emoji catalog failed:", err);
     }
+  }
+
+  function loadBookmarkFilterSelection() {
+    try {
+      const raw = localStorage.getItem(getBookmarkFilterStorageKey());
+      if (!raw) {
+        return new Set(bookmarkEmojiCatalog);
+      }
+      const parsed = JSON.parse(raw);
+      const source = Array.isArray(parsed) ? parsed : [];
+      const next = new Set();
+      for (const item of source) {
+        const emoji = normalizeEmojiTag(item);
+        if (!emoji) continue;
+        if (!bookmarkEmojiCatalog.includes(emoji)) continue;
+        next.add(emoji);
+      }
+      return next;
+    } catch (err) {
+      console.warn("[MR] load bookmark filter failed:", err);
+      return new Set(bookmarkEmojiCatalog);
+    }
+  }
+
+  function saveBookmarkFilterSelection() {
+    try {
+      localStorage.setItem(getBookmarkFilterStorageKey(), JSON.stringify(Array.from(bookmarkFilterSelected || [])));
+    } catch (err) {
+      console.warn("[MR] save bookmark filter failed:", err);
+    }
+  }
+
+  function isBookmarkFilterActive() {
+    return Boolean(bookmarkFilterSelected && bookmarkFilterSelected.size > 0);
+  }
+
+  function reconcileBookmarkFilterSelection(previousCatalog = []) {
+    if (!(bookmarkFilterSelected instanceof Set)) {
+      bookmarkFilterSelected = new Set();
+    }
+    if (!bookmarkFilterSelected.size) return;
+    const hadPrevious = Array.isArray(previousCatalog) && previousCatalog.length > 0;
+    const wasAllSelected = hadPrevious && previousCatalog.every((emoji) => bookmarkFilterSelected.has(emoji));
+    const next = new Set();
+    for (const emoji of bookmarkEmojiCatalog) {
+      if (bookmarkFilterSelected.has(emoji) || wasAllSelected) {
+        next.add(emoji);
+      }
+    }
+    bookmarkFilterSelected = next;
+    saveBookmarkFilterSelection();
   }
 
   function loadBookmarks() {
@@ -409,6 +476,7 @@
     }
     saveBookmarks();
     rerenderBookmarkDecorations();
+    scheduleBookmarkFilterApply(40, { resetManualOpen: true });
     return true;
   }
 
@@ -419,6 +487,7 @@
     delete bookmarksByIndex[key];
     saveBookmarks();
     rerenderBookmarkDecorations();
+    scheduleBookmarkFilterApply(40, { resetManualOpen: true });
     return true;
   }
 
@@ -439,9 +508,13 @@
     const emoji = normalizeEmojiTag(rawEmoji);
     if (!emoji) return { ok: false, reason: "invalid", emoji: "" };
     if (bookmarkEmojiCatalog.includes(emoji)) return { ok: false, reason: "exists", emoji };
+    const previousCatalog = [...bookmarkEmojiCatalog];
     bookmarkEmojiCatalog = normalizeEmojiCatalog([...bookmarkEmojiCatalog, emoji]);
     saveEmojiCatalog();
+    reconcileBookmarkFilterSelection(previousCatalog);
     renderBookmarkEmojiMenu();
+    renderBookmarkFilterMenu();
+    scheduleBookmarkFilterApply(40, { resetManualOpen: true });
     return { ok: true, reason: "added", emoji };
   }
 
@@ -465,12 +538,18 @@
   function rerenderBookmarkDecorations() {
     syncAllMessageIndexLabels();
     rerenderBookmarkSelect();
+    updateBookmarkFilterButtonLabel();
   }
 
   function jumpToMessageIndex(index) {
     if (!Number.isInteger(index) || index <= 0) return false;
     const msgs = Array.from(document.querySelectorAll('[data-message-author-role]'));
     let target = msgs[index - 1];
+    if (target && target.getAttribute(FILTER_GROUP_MEMBER_ATTR) === "1") {
+      expandBookmarkFilterGroup(target.getAttribute(FILTER_GROUP_ID_ATTR));
+      const refreshed = Array.from(document.querySelectorAll('[data-message-author-role]'));
+      target = refreshed[index - 1];
+    }
     if (target && target.getAttribute(GROUP_MEMBER_ATTR) === "1") {
       expandSecondaryGroup(target.getAttribute(GROUP_ID_ATTR));
       const refreshed = Array.from(document.querySelectorAll('[data-message-author-role]'));
@@ -490,13 +569,29 @@
         <input id="${BOOKMARK_INPUT_ID}" type="number" min="1" step="1" placeholder="編號">
         <button type="button" data-mr-action="bookmark-add">加入預設</button>
         <select id="${BOOKMARK_SELECT_ID}"></select>
+        <button type="button" data-mr-action="bookmark-filter-menu">篩選</button>
         <button type="button" data-mr-action="bookmark-remove">清空類別</button>
         <button type="button" data-mr-action="group-regroup-all">重收合</button>
       `;
       document.body.appendChild(panel);
     }
     rerenderBookmarkSelect();
+    updateBookmarkFilterButtonLabel();
     updateBookmarkPanelPosition();
+  }
+
+  function updateBookmarkFilterButtonLabel() {
+    const panel = document.getElementById(BOOKMARK_PANEL_ID);
+    if (!panel) return;
+    const btn = panel.querySelector('[data-mr-action="bookmark-filter-menu"]');
+    if (!btn) return;
+    if (!isBookmarkFilterActive()) {
+      btn.textContent = "篩選: 全部";
+      btn.setAttribute("title", "未勾選任何類別，顯示全部訊息");
+      return;
+    }
+    btn.textContent = `篩選:${bookmarkFilterSelected.size}`;
+    btn.setAttribute("title", "僅顯示所選書籤類別與最後 10 筆訊息");
   }
 
   function ensureBookmarkEmojiMenu() {
@@ -514,6 +609,50 @@
     `;
     document.body.appendChild(menu);
     return menu;
+  }
+
+  function ensureBookmarkFilterMenu() {
+    let menu = document.getElementById(BOOKMARK_FILTER_MENU_ID);
+    if (menu) return menu;
+    menu = document.createElement("div");
+    menu.id = BOOKMARK_FILTER_MENU_ID;
+    menu.innerHTML = `
+      <div class="mr-bookmark-filter-title">顯示哪些書籤類別</div>
+      <div class="mr-bookmark-filter-note">未勾選任何類別時，顯示全部訊息。</div>
+      <div class="mr-bookmark-filter-list"></div>
+      <div class="mr-bookmark-filter-actions">
+        <button type="button" data-mr-action="bookmark-filter-select-all">全選</button>
+        <button type="button" data-mr-action="bookmark-filter-clear">全不選</button>
+      </div>
+    `;
+    document.body.appendChild(menu);
+    return menu;
+  }
+
+  function renderBookmarkFilterMenu() {
+    const menu = ensureBookmarkFilterMenu();
+    const list = menu.querySelector(".mr-bookmark-filter-list");
+    if (!list) return;
+    list.innerHTML = bookmarkEmojiCatalog
+      .map((emoji) => {
+        const checked = bookmarkFilterSelected.has(emoji) ? " checked" : "";
+        return `<label><input type="checkbox" ${BOOKMARK_FILTER_CHECK_ATTR}="1" ${BOOKMARK_FILTER_ITEM_ATTR}="${esc(emoji)}"${checked}> <span>${esc(emoji)}</span></label>`;
+      })
+      .join("");
+  }
+
+  function openBookmarkFilterMenu(anchor) {
+    closeBookmarkEmojiMenu();
+    const menu = ensureBookmarkFilterMenu();
+    renderBookmarkFilterMenu();
+    menu.style.display = "block";
+    positionBookmarkEmojiMenu(anchor, menu);
+  }
+
+  function closeBookmarkFilterMenu() {
+    const menu = document.getElementById(BOOKMARK_FILTER_MENU_ID);
+    if (!menu) return;
+    menu.style.display = "none";
   }
 
   function renderBookmarkEmojiMenu(index = bookmarkMenuIndex) {
@@ -536,11 +675,12 @@
   }
 
   function openBookmarkEmojiMenu(anchor, index) {
+    closeBookmarkFilterMenu();
     const menu = ensureBookmarkEmojiMenu();
     bookmarkMenuIndex = Number(index);
     renderBookmarkEmojiMenu(bookmarkMenuIndex);
     menu.style.display = "block";
-    positionBookmarkEmojiMenu(anchor);
+    positionBookmarkEmojiMenu(anchor, menu);
   }
 
   function closeBookmarkEmojiMenu() {
@@ -550,8 +690,8 @@
     bookmarkMenuIndex = null;
   }
 
-  function positionBookmarkEmojiMenu(anchor) {
-    const menu = ensureBookmarkEmojiMenu();
+  function positionBookmarkEmojiMenu(anchor, menuNode) {
+    const menu = menuNode || ensureBookmarkEmojiMenu();
     if (!anchor) return;
     const rect = anchor.getBoundingClientRect();
     const width = 220;
@@ -732,8 +872,18 @@
           background: rgba(17, 24, 39, 0.96);
           color: #e5e7eb;
         }
+        #${BOOKMARK_FILTER_MENU_ID} {
+          border-color: rgba(148, 163, 184, 0.35);
+          background: rgba(17, 24, 39, 0.96);
+          color: #e5e7eb;
+        }
         #${BOOKMARK_EMOJI_MENU_ID} .mr-bookmark-emoji-addrow input,
         #${BOOKMARK_EMOJI_MENU_ID} .mr-bookmark-emoji-addrow button {
+          border-color: rgba(148, 163, 184, 0.45);
+          background: rgba(31, 41, 55, 0.96);
+          color: #e5e7eb;
+        }
+        #${BOOKMARK_FILTER_MENU_ID} .mr-bookmark-filter-actions button {
           border-color: rgba(148, 163, 184, 0.45);
           background: rgba(31, 41, 55, 0.96);
           color: #e5e7eb;
@@ -869,6 +1019,85 @@
       }
       #${BOOKMARK_EMOJI_MENU_ID} .mr-bookmark-emoji-addrow button {
         padding: 0 8px;
+        cursor: pointer;
+      }
+      #${BOOKMARK_FILTER_MENU_ID} {
+        position: fixed;
+        display: none;
+        width: 220px;
+        z-index: 2147483647;
+        border-radius: 10px;
+        border: 1px solid rgba(148, 163, 184, 0.45);
+        background: rgba(255, 255, 255, 0.98);
+        box-shadow: 0 14px 38px rgba(15, 23, 42, 0.2);
+        backdrop-filter: blur(2px);
+        padding: 8px;
+        color: #111827;
+      }
+      #${BOOKMARK_FILTER_MENU_ID} .mr-bookmark-filter-title {
+        font-size: 12px;
+        font-weight: 600;
+        margin-bottom: 4px;
+      }
+      #${BOOKMARK_FILTER_MENU_ID} .mr-bookmark-filter-note {
+        font-size: 11px;
+        opacity: 0.8;
+        margin-bottom: 6px;
+      }
+      #${BOOKMARK_FILTER_MENU_ID} .mr-bookmark-filter-list {
+        max-height: 160px;
+        overflow-y: auto;
+        display: grid;
+        gap: 4px;
+        margin-bottom: 8px;
+      }
+      #${BOOKMARK_FILTER_MENU_ID} label {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+      }
+      #${BOOKMARK_FILTER_MENU_ID} .mr-bookmark-filter-actions {
+        display: flex;
+        gap: 6px;
+      }
+      #${BOOKMARK_FILTER_MENU_ID} .mr-bookmark-filter-actions button {
+        height: 26px;
+        border-radius: 8px;
+        border: 1px solid rgba(148, 163, 184, 0.55);
+        background: #fff;
+        font-size: 12px;
+        color: #111827;
+        padding: 0 8px;
+        cursor: pointer;
+      }
+      [${FILTER_GROUP_ATTR}="1"] {
+        margin: 8px auto;
+        max-width: min(920px, calc(100% - 24px));
+        border: 1px dashed rgba(125, 211, 252, 0.8);
+        border-radius: 10px;
+        background: rgba(186, 230, 253, 0.18);
+        padding: 10px 12px;
+        color: inherit;
+      }
+      [${FILTER_GROUP_ATTR}="1"] .mr-group-meta {
+        font-size: 12px;
+        opacity: .82;
+        margin-bottom: 6px;
+      }
+      [${FILTER_GROUP_ATTR}="1"] .mr-group-title {
+        font-size: 13px;
+        line-height: 1.4;
+      }
+      [${FILTER_GROUP_ATTR}="1"] .mr-group-actions {
+        margin-top: 8px;
+      }
+      [${FILTER_GROUP_ATTR}="1"] button {
+        font-size: 12px;
+        padding: 4px 9px;
+        border-radius: 8px;
+        border: 1px solid rgba(56, 189, 248, 0.45);
+        background: rgba(255, 255, 255, 0.88);
         cursor: pointer;
       }
       [${GROUP_ATTR}="1"] {
@@ -1106,6 +1335,135 @@
     return `${firstPos.messageIndex}-${lastPos.messageIndex}`;
   }
 
+  function clearBookmarkFilterGroups(options = {}) {
+    const dropManualOpen = options.dropManualOpen !== false;
+    const members = Array.from(document.querySelectorAll(`[${FILTER_GROUP_MEMBER_ATTR}="1"]`));
+    for (const host of members) {
+      host.style.display = "";
+      host.removeAttribute(FILTER_GROUP_MEMBER_ATTR);
+      host.removeAttribute(FILTER_GROUP_ID_ATTR);
+    }
+    const groups = Array.from(document.querySelectorAll(`[${FILTER_GROUP_ATTR}="1"]`));
+    for (const group of groups) {
+      group.remove();
+    }
+    if (dropManualOpen) {
+      const manualOpen = Array.from(document.querySelectorAll(`[${FILTER_GROUP_MANUAL_OPEN_ATTR}="1"]`));
+      for (const host of manualOpen) {
+        host.removeAttribute(FILTER_GROUP_MANUAL_OPEN_ATTR);
+      }
+    }
+  }
+
+  function createBookmarkFilterGroup(hosts) {
+    if (!hosts || !hosts.length) return;
+    const first = hosts[0];
+    if (!first || !first.parentElement) return;
+    const groupId = `fg_${Date.now()}_${seq++}`;
+    const rangeLabel = getGroupRangeLabel(hosts);
+    const group = document.createElement("div");
+    group.setAttribute(FILTER_GROUP_ATTR, "1");
+    group.setAttribute(FILTER_GROUP_ID_ATTR, groupId);
+    group.innerHTML = `
+      <div class="mr-group-meta">篩選隱藏（${hosts.length} 則）</div>
+      <div class="mr-group-title">第 ${esc(rangeLabel)} 則未命中篩選書籤類別</div>
+      <div class="mr-group-actions">
+        <button type="button" data-mr-action="filter-group-expand" data-mr-filter-group-id="${groupId}">展開此區段</button>
+      </div>
+    `;
+    first.parentElement.insertBefore(group, first);
+    for (const host of hosts) {
+      host.setAttribute(FILTER_GROUP_MEMBER_ATTR, "1");
+      host.setAttribute(FILTER_GROUP_ID_ATTR, groupId);
+      host.style.display = "none";
+    }
+  }
+
+  function expandBookmarkFilterGroup(groupId) {
+    if (!groupId) return;
+    const group = document.querySelector(`[${FILTER_GROUP_ATTR}="1"][${FILTER_GROUP_ID_ATTR}="${groupId}"]`);
+    const members = Array.from(document.querySelectorAll(`[${FILTER_GROUP_MEMBER_ATTR}="1"][${FILTER_GROUP_ID_ATTR}="${groupId}"]`));
+    for (const host of members) {
+      host.style.display = "";
+      host.removeAttribute(FILTER_GROUP_MEMBER_ATTR);
+      host.removeAttribute(FILTER_GROUP_ID_ATTR);
+      host.setAttribute(FILTER_GROUP_MANUAL_OPEN_ATTR, "1");
+    }
+    if (group) {
+      group.remove();
+    }
+  }
+
+  function shouldShowMessageByBookmarkFilter(messageIndex, totalMessages, host) {
+    if (Number.isInteger(messageIndex) && Number.isInteger(totalMessages)) {
+      const keepFrom = Math.max(1, totalMessages - KEEP_LATEST + 1);
+      if (messageIndex >= keepFrom) return true;
+    }
+    if (host && host.getAttribute(FILTER_GROUP_MANUAL_OPEN_ATTR) === "1") return true;
+    if (!isBookmarkFilterActive()) return true;
+    const emojis = getBookmarkEmojis(messageIndex);
+    if (!emojis.length) return false;
+    for (const emoji of emojis) {
+      if (bookmarkFilterSelected.has(emoji)) return true;
+    }
+    return false;
+  }
+
+  function applyBookmarkFilter(options = {}) {
+    const resetManualOpen = options.resetManualOpen === true;
+    if (resetManualOpen) {
+      clearBookmarkFilterGroups({ dropManualOpen: true });
+    } else {
+      clearBookmarkFilterGroups({ dropManualOpen: false });
+    }
+    if (!isBookmarkFilterActive()) {
+      if (!resetManualOpen) {
+        const manualOpen = Array.from(document.querySelectorAll(`[${FILTER_GROUP_MANUAL_OPEN_ATTR}="1"]`));
+        for (const host of manualOpen) {
+          host.removeAttribute(FILTER_GROUP_MANUAL_OPEN_ATTR);
+        }
+      }
+      return;
+    }
+    clearSecondaryGroups();
+    const msgs = Array.from(document.querySelectorAll('[data-message-author-role]'));
+    const total = msgs.length;
+    const hiddenBucket = [];
+    for (let i = 0; i < total; i += 1) {
+      const host = msgs[i];
+      const messageIndex = i + 1;
+      if (shouldShowMessageByBookmarkFilter(messageIndex, total, host)) {
+        if (hiddenBucket.length) {
+          createBookmarkFilterGroup([...hiddenBucket]);
+          hiddenBucket.length = 0;
+        }
+        host.style.display = "";
+        continue;
+      }
+      if (host.getAttribute(FLAG) !== "1") {
+        host.removeAttribute(EXPANDED_LOCK_ATTR);
+        compactMessage(host, messageIndex, total);
+      }
+      hiddenBucket.push(host);
+    }
+    if (hiddenBucket.length) {
+      createBookmarkFilterGroup([...hiddenBucket]);
+    }
+  }
+
+  function scheduleBookmarkFilterApply(delayMs = 120, options = {}) {
+    if (options.resetManualOpen) {
+      bookmarkFilterResetManualPending = true;
+    }
+    clearTimeout(bookmarkFilterScheduled);
+    bookmarkFilterScheduled = setTimeout(() => {
+      bookmarkFilterScheduled = null;
+      const resetManualOpen = bookmarkFilterResetManualPending;
+      bookmarkFilterResetManualPending = false;
+      applyBookmarkFilter({ resetManualOpen });
+    }, delayMs);
+  }
+
   function createSecondaryGroup(hosts) {
     if (!hosts || hosts.length < SECONDARY_GROUP_SIZE) return;
     const first = hosts[0];
@@ -1132,6 +1490,7 @@
 
   function runSecondaryGrouping() {
     if (isStreamingNow()) return;
+    if (isBookmarkFilterActive()) return;
     const msgs = Array.from(document.querySelectorAll('[data-message-author-role]'));
     const cutoff = Math.max(0, msgs.length - KEEP_LATEST);
     if (cutoff < SECONDARY_GROUP_SIZE) return;
@@ -1220,14 +1579,17 @@
     const nextKey = `${location.pathname}${location.search}`;
     if (nextKey === routeKey) return false;
     clearSecondaryGroups();
+    clearBookmarkFilterGroups({ dropManualOpen: true });
     routeKey = nextKey;
     bookmarksByIndex = loadBookmarks();
     mergeUsedEmojisIntoCatalog();
     closeBookmarkEmojiMenu();
+    closeBookmarkFilterMenu();
     rerenderBookmarkDecorations();
     startupDone = false;
     showStatus("收合中", "working");
     scheduleCompact(30);
+    scheduleBookmarkFilterApply(60, { resetManualOpen: true });
     return true;
   }
 
@@ -1265,6 +1627,7 @@
     if (compacted > 0) {
       scheduleFullIndexSync(80);
       scheduleSecondaryGrouping(120);
+      scheduleBookmarkFilterApply(100);
     }
     maybeCompleteStartupStatus();
   }
@@ -1438,6 +1801,42 @@
       return;
     }
 
+    const filterGroupExpandBtn = e.target.closest('[data-mr-action="filter-group-expand"]');
+    if (filterGroupExpandBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      expandBookmarkFilterGroup(filterGroupExpandBtn.getAttribute("data-mr-filter-group-id"));
+      return;
+    }
+
+    const filterSelectAllBtn = e.target.closest('[data-mr-action="bookmark-filter-select-all"]');
+    if (filterSelectAllBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      bookmarkFilterSelected = new Set(bookmarkEmojiCatalog);
+      saveBookmarkFilterSelection();
+      renderBookmarkFilterMenu();
+      updateBookmarkFilterButtonLabel();
+      scheduleBookmarkFilterApply(40, { resetManualOpen: true });
+      scheduleSecondaryGrouping(120);
+      showStatus("已套用：僅顯示所有書籤類別 + 最後 10 筆", "done");
+      return;
+    }
+
+    const filterClearBtn = e.target.closest('[data-mr-action="bookmark-filter-clear"]');
+    if (filterClearBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      bookmarkFilterSelected = new Set();
+      saveBookmarkFilterSelection();
+      renderBookmarkFilterMenu();
+      updateBookmarkFilterButtonLabel();
+      scheduleBookmarkFilterApply(40, { resetManualOpen: true });
+      scheduleSecondaryGrouping(120);
+      showStatus("已套用：顯示全部訊息", "done");
+      return;
+    }
+
     const bookmarkPanel = e.target.closest(`#${BOOKMARK_PANEL_ID}`);
     if (bookmarkPanel) {
       const action = e.target.getAttribute("data-mr-action");
@@ -1471,6 +1870,15 @@
           showStatus(`已清空 #${index} 的書籤類別`, "done");
         } else {
           showStatus(`#${index} 沒有書籤可清空`, "done");
+        }
+        return;
+      }
+      if (action === "bookmark-filter-menu") {
+        const menu = document.getElementById(BOOKMARK_FILTER_MENU_ID);
+        if (menu && menu.style.display !== "none") {
+          closeBookmarkFilterMenu();
+        } else {
+          openBookmarkFilterMenu(e.target.closest('[data-mr-action="bookmark-filter-menu"]'));
         }
         return;
       }
@@ -1514,8 +1922,12 @@
     }
 
     const clickedInsideEmojiMenu = e.target.closest(`#${BOOKMARK_EMOJI_MENU_ID}`);
+    const clickedInsideFilterMenu = e.target.closest(`#${BOOKMARK_FILTER_MENU_ID}`);
     if (!clickedInsideEmojiMenu) {
       closeBookmarkEmojiMenu();
+    }
+    if (!clickedInsideFilterMenu) {
+      closeBookmarkFilterMenu();
     }
 
     const inlineCollapseBtn = e.target.closest(".mr-inline-collapse");
@@ -1574,6 +1986,29 @@
   });
 
   document.addEventListener("change", (e) => {
+    const filterCheck = e.target.closest(`[${BOOKMARK_FILTER_CHECK_ATTR}="1"]`);
+    if (filterCheck) {
+      const emoji = filterCheck.getAttribute(BOOKMARK_FILTER_ITEM_ATTR) || "";
+      const enabled = Boolean(filterCheck.checked);
+      const normalized = normalizeEmojiTag(emoji);
+      if (!normalized) return;
+      if (enabled) {
+        bookmarkFilterSelected.add(normalized);
+      } else {
+        bookmarkFilterSelected.delete(normalized);
+      }
+      saveBookmarkFilterSelection();
+      updateBookmarkFilterButtonLabel();
+      scheduleBookmarkFilterApply(40, { resetManualOpen: true });
+      scheduleSecondaryGrouping(120);
+      if (!bookmarkFilterSelected.size) {
+        showStatus("篩選已清空，顯示全部訊息", "done");
+      } else {
+        showStatus(`篩選中：${bookmarkFilterSelected.size} 種類別`, "done");
+      }
+      return;
+    }
+
     const emojiCheck = e.target.closest(`[${BOOKMARK_EMOJI_CHECK_ATTR}="1"]`);
     if (emojiCheck) {
       const index = Number(bookmarkMenuIndex);
@@ -1607,6 +2042,7 @@
         processAddedMessageHosts(records);
         scheduleFullIndexSync(INDEX_SYNC_DELAY_STREAMING_MS);
         scheduleCompact(30);
+        scheduleBookmarkFilterApply(120, { resetManualOpen: true });
       }
       scheduleBookmarkPanelPosition();
       return;
@@ -1617,6 +2053,7 @@
       scheduleFullIndexSync(80);
       scheduleCompact(60);
       scheduleSecondaryGrouping(140);
+      scheduleBookmarkFilterApply(100);
     }
 
     const messageMutated = hasMessageMutation(records);
@@ -1624,6 +2061,7 @@
       processAddedMessageHosts(records);
       scheduleFullIndexSync(INDEX_SYNC_DELAY_IDLE_MS);
       scheduleSecondaryGrouping();
+      scheduleBookmarkFilterApply(routeChanged ? 120 : 100, { resetManualOpen: routeChanged });
     }
     scheduleBookmarkPanelPosition();
     if (routeChanged || messageMutated) {
@@ -1637,8 +2075,10 @@
 
   ensureStyles();
   bookmarkEmojiCatalog = loadEmojiCatalog();
+  bookmarkFilterSelected = loadBookmarkFilterSelection();
   bookmarksByIndex = loadBookmarks();
   mergeUsedEmojisIntoCatalog();
+  reconcileBookmarkFilterSelection();
   ensureBookmarkPanel();
   updateBookmarkPanelPosition();
   showStatus("收合中", "working");
@@ -1646,6 +2086,7 @@
   ensureButtonsForExpandedMessages();
   runCompact();
   scheduleSecondaryGrouping(200);
+  scheduleBookmarkFilterApply(220, { resetManualOpen: true });
   observer.observe(document.body, { childList: true, subtree: true });
   setInterval(() => {
     const streaming = isStreamingNow();
@@ -1654,6 +2095,7 @@
       scheduleFullIndexSync(80);
       scheduleCompact(60);
       scheduleSecondaryGrouping(140);
+      scheduleBookmarkFilterApply(100);
     }
     checkRouteChange();
     updateBookmarkPanelPosition();
@@ -1662,6 +2104,7 @@
     }
     if (!streaming) {
       scheduleSecondaryGrouping();
+      scheduleBookmarkFilterApply(180);
     }
   }, PERIODIC_COMPACT_MS);
   window.addEventListener("resize", () => {
@@ -1669,6 +2112,10 @@
     const menu = document.getElementById(BOOKMARK_EMOJI_MENU_ID);
     if (menu && menu.style.display !== "none") {
       closeBookmarkEmojiMenu();
+    }
+    const filterMenu = document.getElementById(BOOKMARK_FILTER_MENU_ID);
+    if (filterMenu && filterMenu.style.display !== "none") {
+      closeBookmarkFilterMenu();
     }
   });
   setInterval(() => {
