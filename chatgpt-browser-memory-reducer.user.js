@@ -80,6 +80,7 @@
       bookmarkInputPlaceholder: "編號",
       collapseExpandedButton: "收合已展開",
       filterButton: "篩選",
+      exportBookmarksButton: "匯出全部",
       collapseVisibleTitle: "在目前篩選條件下，將可見的展開訊息全部收合",
       filterAllLabel: "篩選: 全部",
       filterAllTitle: "未勾選任何類別，顯示全部訊息",
@@ -118,6 +119,8 @@
       statusJumpedTo: "已跳轉到 #{index}",
       statusNotFound: "找不到 #{index}",
       statusInvalidNumber: "請輸入有效編號",
+      statusBookmarksExported: "已匯出全部書籤（{routes} 個 route，{count} 筆）",
+      statusBookmarksExportFailed: "匯出全部書籤失敗",
     },
     en: {
       blankMessage: "[Empty message]",
@@ -133,6 +136,7 @@
       bookmarkInputPlaceholder: "Index",
       collapseExpandedButton: "Collapse expanded",
       filterButton: "Filter",
+      exportBookmarksButton: "Export all",
       collapseVisibleTitle: "Collapse all visible expanded messages under current filter",
       filterAllLabel: "Filter: all",
       filterAllTitle: "No category selected; showing all messages",
@@ -171,6 +175,8 @@
       statusJumpedTo: "Jumped to #{index}",
       statusNotFound: "Cannot find #{index}",
       statusInvalidNumber: "Please enter a valid index",
+      statusBookmarksExported: "Exported all bookmarks ({routes} routes, {count} items)",
+      statusBookmarksExportFailed: "Failed to export all bookmarks",
     },
   };
 
@@ -673,12 +679,78 @@
         <select id="${BOOKMARK_SELECT_ID}"></select>
         <button type="button" data-mr-action="bookmark-collapse-visible">${esc(t("collapseExpandedButton"))}</button>
         <button type="button" data-mr-action="bookmark-filter-menu">${esc(t("filterButton"))}</button>
+        <button type="button" data-mr-action="bookmark-export">${esc(t("exportBookmarksButton"))}</button>
       `;
       document.body.appendChild(panel);
     }
     rerenderBookmarkSelect();
     updateBookmarkFilterButtonLabel();
     updateBookmarkPanelPosition();
+  }
+
+  function makeBookmarkExportFilename() {
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    return `chatgpt-bookmarks-all-routes-${stamp}.json`;
+  }
+
+  function readAllBookmarksByRoute() {
+    const out = {};
+    const prefix = "mr-bookmarks:";
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith(prefix)) continue;
+      const route = key.slice(prefix.length);
+      if (!route) continue;
+      try {
+        const raw = localStorage.getItem(key);
+        if (!raw) continue;
+        const normalized = normalizeBookmarksByIndex(JSON.parse(raw));
+        if (!Object.keys(normalized).length) continue;
+        out[route] = normalized;
+      } catch (err) {
+        console.warn("[MR] read bookmark route failed:", key, err);
+      }
+    }
+    return out;
+  }
+
+  function countBookmarkedItems(bookmarksByRoute) {
+    let count = 0;
+    if (!bookmarksByRoute || typeof bookmarksByRoute !== "object") return 0;
+    for (const routeData of Object.values(bookmarksByRoute)) {
+      if (!routeData || typeof routeData !== "object") continue;
+      count += Object.keys(routeData).length;
+    }
+    return count;
+  }
+
+  function exportAllBookmarks(allBookmarksByRoute = readAllBookmarksByRoute()) {
+    const payload = {
+      version: 2,
+      scope: "all-routes",
+      currentRoute: routeKey,
+      exportedAt: new Date().toISOString(),
+      bookmarksByRoute: allBookmarksByRoute,
+      emojiCatalog: normalizeEmojiCatalog(bookmarkEmojiCatalog),
+      filterSelected: Array.from(bookmarkFilterSelected || []),
+    };
+    const text = JSON.stringify(payload, null, 2);
+    const blob = new Blob([text], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    try {
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = makeBookmarkExportFilename();
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      return true;
+    } catch (err) {
+      console.warn("[MR] export bookmarks failed:", err);
+      return false;
+    } finally {
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    }
   }
 
   function updateBookmarkFilterButtonLabel() {
@@ -1906,6 +1978,22 @@
           showStatus(t("statusRegrouped"), "done");
         } else {
           showStatus(t("statusNothingToCollapse"), "done");
+        }
+        return;
+      }
+      if (action === "bookmark-export") {
+        const allBookmarksByRoute = readAllBookmarksByRoute();
+        const ok = exportAllBookmarks(allBookmarksByRoute);
+        if (ok) {
+          showStatus(
+            t("statusBookmarksExported", {
+              routes: Object.keys(allBookmarksByRoute).length,
+              count: countBookmarkedItems(allBookmarksByRoute),
+            }),
+            "done"
+          );
+        } else {
+          showStatus(t("statusBookmarksExportFailed"), "done");
         }
         return;
       }

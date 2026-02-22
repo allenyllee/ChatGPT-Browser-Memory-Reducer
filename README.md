@@ -23,6 +23,7 @@ It compacts older messages into preview cards, stores full content in IndexedDB 
   - jump via bookmarked index dropdown
   - collapse visible expanded messages
   - filter by bookmark categories
+  - export bookmarks as JSON for all conversation routes
 - When bookmark filtering is active, only selected bookmark categories + latest 10 messages stay visible.
 - Consecutive hidden ranges are grouped into expandable placeholders.
 
@@ -56,6 +57,7 @@ The script starts automatically on conversation pages.
   - Enter a number to jump to that message (Enter to confirm; mouse wheel increments/decrements).
   - Use the bookmark dropdown to jump to bookmarked messages.
   - Use **Filter** to show specific emoji bookmark categories.
+  - Use **Export all** to download bookmarks for all routes as JSON.
 - Index badge actions:
   - Click: scroll to that message.
   - `Shift + Click`: toggle default bookmark emoji.
