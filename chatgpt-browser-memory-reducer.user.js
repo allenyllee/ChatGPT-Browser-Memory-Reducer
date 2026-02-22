@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Browser Memory Reducer (Expandable + IndexedDB)
 // @namespace    local.chatgpt.browser.memory.reducer
-// @version      0.7.0
+// @version      0.8.0
 // @description  Compress old ChatGPT messages to reduce browser memory usage and lag, with expandable restore from IndexedDB.
 // @author       allenyllee
 // @downloadURL  https://gist.github.com/b1e7051e064b4ad8084efa16edc4fbf8/raw/chatgpt-browser-memory-reducer.user.js
@@ -38,10 +38,17 @@
   const BOOKMARK_PANEL_ID = "mr-bookmark-panel";
   const BOOKMARK_SELECT_ID = "mr-bookmark-select";
   const BOOKMARK_INPUT_ID = "mr-bookmark-input";
+  const BOOKMARK_EMOJI_MENU_ID = "mr-bookmark-emoji-menu";
+  const BOOKMARK_EMOJI_INPUT_ID = "mr-bookmark-emoji-input";
+  const BOOKMARK_EMOJI_ADD_ATTR = "data-mr-bookmark-emoji-add";
+  const BOOKMARK_EMOJI_CHECK_ATTR = "data-mr-bookmark-emoji-check";
+  const BOOKMARK_EMOJI_ITEM_ATTR = "data-mr-bookmark-emoji";
   const BOOKMARK_PANEL_MIN_BOTTOM = 56;
   const INDEX_TOOLS_ATTR = "data-mr-index-tools";
+  const INDEX_TOP_ATTR = "data-mr-index-top";
   const INDEX_BADGE_ATTR = "data-mr-index-badge";
   const INDEX_ADD_ATTR = "data-mr-index-add";
+  const INDEX_EMOJI_ROW_ATTR = "data-mr-index-emoji-row";
   const INDEX_VALUE_ATTR = "data-mr-index-value";
   const GROUP_ATTR = "data-mr-group";
   const GROUP_ID_ATTR = "data-mr-group-id";
@@ -52,6 +59,8 @@
   const SCROLL_BASE_MS = 350;
   const SCROLL_MS_PER_PX = 0.35;
   const SCROLL_MAX_MS = 1800;
+  const DEFAULT_BOOKMARK_EMOJIS = ["⭐", "❤️", "🔥", "✅", "📌"];
+  const MAX_EMOJI_TAG_LENGTH = 8;
 
   let seq = 1;
   let dbPromise = null;
@@ -66,7 +75,9 @@
   let routeKey = `${location.pathname}${location.search}`;
   let statusTimer = null;
   let statusDotPhase = 0;
-  let bookmarks = [];
+  let bookmarksByIndex = {};
+  let bookmarkEmojiCatalog = [...DEFAULT_BOOKMARK_EMOJIS];
+  let bookmarkMenuIndex = null;
 
   const hotCache = new Map();
   const writeQueue = [];
@@ -187,29 +198,42 @@
       tools.setAttribute(INDEX_TOOLS_ATTR, "1");
       host.prepend(tools);
     }
-    let badge = tools.querySelector(`[${INDEX_BADGE_ATTR}="1"]`);
-    let addBtn = tools.querySelector(`[${INDEX_ADD_ATTR}="1"]`);
+    let top = tools.querySelector(`[${INDEX_TOP_ATTR}="1"]`);
+    if (!top) {
+      top = document.createElement("div");
+      top.setAttribute(INDEX_TOP_ATTR, "1");
+      tools.appendChild(top);
+    }
+    let badge = top.querySelector(`[${INDEX_BADGE_ATTR}="1"]`);
+    let addBtn = top.querySelector(`[${INDEX_ADD_ATTR}="1"]`);
+    let emojiRow = tools.querySelector(`[${INDEX_EMOJI_ROW_ATTR}="1"]`);
     const indexValue = indexFromLabel(label) || resolveMessagePosition(host).messageIndex;
-    const bookmarked = Number.isInteger(indexValue) && bookmarks.includes(indexValue);
+    const bookmarkEmojis = Number.isInteger(indexValue) ? getBookmarkEmojis(indexValue) : [];
+    const bookmarked = bookmarkEmojis.length > 0;
     if (!badge) {
       badge = document.createElement("div");
       badge.setAttribute(INDEX_BADGE_ATTR, "1");
-      tools.appendChild(badge);
+      top.appendChild(badge);
     }
     if (!addBtn) {
       addBtn = document.createElement("button");
       addBtn.type = "button";
       addBtn.setAttribute(INDEX_ADD_ATTR, "1");
       addBtn.textContent = "+";
-      addBtn.setAttribute("title", "加入書籤");
-      tools.appendChild(addBtn);
+      addBtn.setAttribute("title", "管理 emoji 書籤");
+      top.appendChild(addBtn);
     }
-    const viewLabel = bookmarked ? `${label} ★` : label;
+    if (!emojiRow) {
+      emojiRow = document.createElement("div");
+      emojiRow.setAttribute(INDEX_EMOJI_ROW_ATTR, "1");
+      tools.appendChild(emojiRow);
+    }
+    const viewLabel = label;
     badge.setAttribute(
       "title",
       bookmarked
-        ? "點擊捲動到這則對話頂端。Shift+點擊可取消書籤。"
-        : "點擊捲動到這則對話頂端。Shift+點擊可加入書籤。"
+        ? "點擊捲動到這則對話頂端。Shift+點擊切換預設 emoji 書籤。"
+        : "點擊捲動到這則對話頂端。Shift+點擊可加入預設 emoji 書籤。"
     );
     if (Number.isInteger(indexValue)) {
       badge.setAttribute(INDEX_VALUE_ATTR, String(indexValue));
@@ -221,58 +245,219 @@
     if (badge.textContent !== viewLabel) {
       badge.textContent = viewLabel;
     }
-    addBtn.disabled = bookmarked;
+    emojiRow.innerHTML = bookmarkEmojis.map((emoji) => `<span title="${esc(emoji)}">${esc(emoji)}</span>`).join("");
+    emojiRow.style.display = bookmarkEmojis.length ? "flex" : "none";
   }
 
   function getBookmarkStorageKey() {
     return `mr-bookmarks:${routeKey}`;
   }
 
-  function normalizeBookmarks(input) {
-    if (!Array.isArray(input)) return [];
+  function getEmojiCatalogStorageKey() {
+    return "mr-bookmark-emoji-catalog:v1";
+  }
+
+  function normalizeEmojiTag(raw) {
+    const value = String(raw || "").trim();
+    if (!value) return "";
+    if (value.length > MAX_EMOJI_TAG_LENGTH) return "";
+    return value;
+  }
+
+  function normalizeEmojiCatalog(input) {
+    const source = Array.isArray(input) ? input : [];
     const seen = new Set();
     const out = [];
-    for (const v of input) {
-      const n = Number(v);
-      if (!Number.isInteger(n) || n <= 0 || seen.has(n)) continue;
-      seen.add(n);
-      out.push(n);
+    for (const item of source) {
+      const emoji = normalizeEmojiTag(item);
+      if (!emoji || seen.has(emoji)) continue;
+      seen.add(emoji);
+      out.push(emoji);
+    }
+    for (const emoji of DEFAULT_BOOKMARK_EMOJIS) {
+      if (!seen.has(emoji)) {
+        seen.add(emoji);
+        out.push(emoji);
+      }
+    }
+    return out;
+  }
+
+  function getBookmarkedIndexes() {
+    const out = [];
+    for (const key of Object.keys(bookmarksByIndex || {})) {
+      const index = Number(key);
+      const emojis = bookmarksByIndex[key];
+      if (!Number.isInteger(index) || index <= 0) continue;
+      if (!Array.isArray(emojis) || !emojis.length) continue;
+      out.push(index);
     }
     out.sort((a, b) => a - b);
     return out;
   }
 
+  function normalizeBookmarksByIndex(input) {
+    const out = {};
+    if (Array.isArray(input)) {
+      for (const value of input) {
+        const index = Number(value);
+        if (!Number.isInteger(index) || index <= 0) continue;
+        out[String(index)] = [DEFAULT_BOOKMARK_EMOJIS[0]];
+      }
+      return out;
+    }
+    if (!input || typeof input !== "object") return out;
+    for (const [k, v] of Object.entries(input)) {
+      const index = Number(k);
+      if (!Number.isInteger(index) || index <= 0) continue;
+      const source = Array.isArray(v) ? v : [];
+      const seen = new Set();
+      const emojis = [];
+      for (const item of source) {
+        const emoji = normalizeEmojiTag(item);
+        if (!emoji || seen.has(emoji)) continue;
+        seen.add(emoji);
+        emojis.push(emoji);
+      }
+      if (emojis.length) {
+        out[String(index)] = emojis;
+      }
+    }
+    return out;
+  }
+
+  function mergeUsedEmojisIntoCatalog() {
+    let changed = false;
+    const seen = new Set(bookmarkEmojiCatalog);
+    for (const emojis of Object.values(bookmarksByIndex)) {
+      if (!Array.isArray(emojis)) continue;
+      for (const item of emojis) {
+        const emoji = normalizeEmojiTag(item);
+        if (!emoji || seen.has(emoji)) continue;
+        seen.add(emoji);
+        bookmarkEmojiCatalog.push(emoji);
+        changed = true;
+      }
+    }
+    if (changed) {
+      saveEmojiCatalog();
+    }
+  }
+
+  function loadEmojiCatalog() {
+    try {
+      const raw = localStorage.getItem(getEmojiCatalogStorageKey());
+      if (!raw) return normalizeEmojiCatalog([]);
+      return normalizeEmojiCatalog(JSON.parse(raw));
+    } catch (err) {
+      console.warn("[MR] load emoji catalog failed:", err);
+      return normalizeEmojiCatalog([]);
+    }
+  }
+
+  function saveEmojiCatalog() {
+    try {
+      localStorage.setItem(getEmojiCatalogStorageKey(), JSON.stringify(normalizeEmojiCatalog(bookmarkEmojiCatalog)));
+    } catch (err) {
+      console.warn("[MR] save emoji catalog failed:", err);
+    }
+  }
+
   function loadBookmarks() {
     try {
       const raw = localStorage.getItem(getBookmarkStorageKey());
-      if (!raw) return [];
-      return normalizeBookmarks(JSON.parse(raw));
+      if (!raw) return {};
+      return normalizeBookmarksByIndex(JSON.parse(raw));
     } catch (err) {
       console.warn("[MR] load bookmarks failed:", err);
-      return [];
+      return {};
     }
   }
 
   function saveBookmarks() {
     try {
-      localStorage.setItem(getBookmarkStorageKey(), JSON.stringify(bookmarks));
+      localStorage.setItem(getBookmarkStorageKey(), JSON.stringify(normalizeBookmarksByIndex(bookmarksByIndex)));
     } catch (err) {
       console.warn("[MR] save bookmarks failed:", err);
     }
+  }
+
+  function getBookmarkEmojis(index) {
+    if (!Number.isInteger(index) || index <= 0) return [];
+    const values = bookmarksByIndex[String(index)];
+    return Array.isArray(values) ? values : [];
+  }
+
+  function setBookmarkEmoji(index, emoji, enabled) {
+    if (!Number.isInteger(index) || index <= 0) return false;
+    const normalizedEmoji = normalizeEmojiTag(emoji);
+    if (!normalizedEmoji) return false;
+    const key = String(index);
+    const current = getBookmarkEmojis(index);
+    const has = current.includes(normalizedEmoji);
+    if (enabled && has) return false;
+    if (!enabled && !has) return false;
+    const next = enabled ? [...current, normalizedEmoji] : current.filter((x) => x !== normalizedEmoji);
+    if (next.length) {
+      bookmarksByIndex[key] = next;
+    } else {
+      delete bookmarksByIndex[key];
+    }
+    if (!bookmarkEmojiCatalog.includes(normalizedEmoji)) {
+      bookmarkEmojiCatalog = normalizeEmojiCatalog([...bookmarkEmojiCatalog, normalizedEmoji]);
+      saveEmojiCatalog();
+    }
+    saveBookmarks();
+    rerenderBookmarkDecorations();
+    return true;
+  }
+
+  function removeAllBookmarkEmojis(index) {
+    if (!Number.isInteger(index) || index <= 0) return false;
+    const key = String(index);
+    if (!bookmarksByIndex[key]) return false;
+    delete bookmarksByIndex[key];
+    saveBookmarks();
+    rerenderBookmarkDecorations();
+    return true;
+  }
+
+  function getDefaultBookmarkEmoji() {
+    return bookmarkEmojiCatalog[0] || DEFAULT_BOOKMARK_EMOJIS[0];
+  }
+
+  function toggleDefaultBookmark(index) {
+    if (!Number.isInteger(index) || index <= 0) return null;
+    const emoji = getDefaultBookmarkEmoji();
+    const enabled = !getBookmarkEmojis(index).includes(emoji);
+    const changed = setBookmarkEmoji(index, emoji, enabled);
+    if (!changed) return null;
+    return enabled;
+  }
+
+  function addEmojiToCatalog(rawEmoji) {
+    const emoji = normalizeEmojiTag(rawEmoji);
+    if (!emoji) return { ok: false, reason: "invalid", emoji: "" };
+    if (bookmarkEmojiCatalog.includes(emoji)) return { ok: false, reason: "exists", emoji };
+    bookmarkEmojiCatalog = normalizeEmojiCatalog([...bookmarkEmojiCatalog, emoji]);
+    saveEmojiCatalog();
+    renderBookmarkEmojiMenu();
+    return { ok: true, reason: "added", emoji };
   }
 
   function rerenderBookmarkSelect() {
     const select = document.getElementById(BOOKMARK_SELECT_ID);
     if (!select) return;
     const previous = Number(select.value);
-    if (!bookmarks.length) {
+    const indexes = getBookmarkedIndexes();
+    if (!indexes.length) {
       select.innerHTML = '<option value="">書籤（空）</option>';
       return;
     }
     select.innerHTML =
       '<option value="">選擇書籤編號</option>' +
-      bookmarks.map((n) => `<option value="${n}">${n}</option>`).join("");
-    if (Number.isInteger(previous) && bookmarks.includes(previous)) {
+      indexes.map((n) => `<option value="${n}">${n}</option>`).join("");
+    if (Number.isInteger(previous) && indexes.includes(previous)) {
       select.value = String(previous);
     }
   }
@@ -280,34 +465,6 @@
   function rerenderBookmarkDecorations() {
     syncAllMessageIndexLabels();
     rerenderBookmarkSelect();
-  }
-
-  function addBookmark(index) {
-    if (!Number.isInteger(index) || index <= 0) return false;
-    if (bookmarks.includes(index)) return false;
-    bookmarks = normalizeBookmarks([...bookmarks, index]);
-    saveBookmarks();
-    rerenderBookmarkDecorations();
-    return true;
-  }
-
-  function removeBookmark(index) {
-    if (!Number.isInteger(index) || index <= 0) return false;
-    if (!bookmarks.includes(index)) return false;
-    bookmarks = bookmarks.filter((n) => n !== index);
-    saveBookmarks();
-    rerenderBookmarkDecorations();
-    return true;
-  }
-
-  function toggleBookmark(index) {
-    if (!Number.isInteger(index) || index <= 0) return null;
-    if (bookmarks.includes(index)) {
-      removeBookmark(index);
-      return false;
-    }
-    addBookmark(index);
-    return true;
   }
 
   function jumpToMessageIndex(index) {
@@ -331,15 +488,78 @@
       panel.id = BOOKMARK_PANEL_ID;
       panel.innerHTML = `
         <input id="${BOOKMARK_INPUT_ID}" type="number" min="1" step="1" placeholder="編號">
-        <button type="button" data-mr-action="bookmark-add">加入</button>
+        <button type="button" data-mr-action="bookmark-add">加入預設</button>
         <select id="${BOOKMARK_SELECT_ID}"></select>
-        <button type="button" data-mr-action="bookmark-remove">刪除</button>
+        <button type="button" data-mr-action="bookmark-remove">清空類別</button>
         <button type="button" data-mr-action="group-regroup-all">重收合</button>
       `;
       document.body.appendChild(panel);
     }
     rerenderBookmarkSelect();
     updateBookmarkPanelPosition();
+  }
+
+  function ensureBookmarkEmojiMenu() {
+    let menu = document.getElementById(BOOKMARK_EMOJI_MENU_ID);
+    if (menu) return menu;
+    menu = document.createElement("div");
+    menu.id = BOOKMARK_EMOJI_MENU_ID;
+    menu.innerHTML = `
+      <div class="mr-bookmark-emoji-title">選擇書籤類別</div>
+      <div class="mr-bookmark-emoji-list"></div>
+      <div class="mr-bookmark-emoji-addrow">
+        <input id="${BOOKMARK_EMOJI_INPUT_ID}" type="text" maxlength="${MAX_EMOJI_TAG_LENGTH}" placeholder="新增 emoji">
+        <button type="button" ${BOOKMARK_EMOJI_ADD_ATTR}="1">新增</button>
+      </div>
+    `;
+    document.body.appendChild(menu);
+    return menu;
+  }
+
+  function renderBookmarkEmojiMenu(index = bookmarkMenuIndex) {
+    const menu = ensureBookmarkEmojiMenu();
+    const targetIndex = Number(index);
+    const validIndex = Number.isInteger(targetIndex) && targetIndex > 0 ? targetIndex : null;
+    const selected = validIndex ? new Set(getBookmarkEmojis(validIndex)) : new Set();
+    const list = menu.querySelector(".mr-bookmark-emoji-list");
+    if (!list) return;
+    list.innerHTML = bookmarkEmojiCatalog
+      .map((emoji) => {
+        const checked = selected.has(emoji) ? " checked" : "";
+        return `<label><input type="checkbox" ${BOOKMARK_EMOJI_CHECK_ATTR}="1" ${BOOKMARK_EMOJI_ITEM_ATTR}="${esc(emoji)}"${checked}> <span>${esc(emoji)}</span></label>`;
+      })
+      .join("");
+    const title = menu.querySelector(".mr-bookmark-emoji-title");
+    if (title) {
+      title.textContent = validIndex ? `選擇 #${validIndex} 的書籤類別` : "選擇書籤類別";
+    }
+  }
+
+  function openBookmarkEmojiMenu(anchor, index) {
+    const menu = ensureBookmarkEmojiMenu();
+    bookmarkMenuIndex = Number(index);
+    renderBookmarkEmojiMenu(bookmarkMenuIndex);
+    menu.style.display = "block";
+    positionBookmarkEmojiMenu(anchor);
+  }
+
+  function closeBookmarkEmojiMenu() {
+    const menu = document.getElementById(BOOKMARK_EMOJI_MENU_ID);
+    if (!menu) return;
+    menu.style.display = "none";
+    bookmarkMenuIndex = null;
+  }
+
+  function positionBookmarkEmojiMenu(anchor) {
+    const menu = ensureBookmarkEmojiMenu();
+    if (!anchor) return;
+    const rect = anchor.getBoundingClientRect();
+    const width = 220;
+    const pad = 8;
+    const top = Math.min(window.innerHeight - 16, rect.bottom + 6);
+    const left = Math.max(pad, Math.min(window.innerWidth - width - pad, rect.right - width));
+    menu.style.top = `${Math.round(top)}px`;
+    menu.style.left = `${Math.round(left)}px`;
   }
 
   function updateBookmarkPanelPosition() {
@@ -500,6 +720,24 @@
         #${BOOKMARK_PANEL_ID} input::placeholder {
           color: rgba(209, 213, 219, 0.78);
         }
+        [data-mr-index-badge="1"],
+        [data-mr-index-add="1"],
+        [data-mr-index-emoji-row="1"] span {
+          border-color: rgba(148, 163, 184, 0.4);
+          background: rgba(31, 41, 55, 0.92);
+          color: #e5e7eb;
+        }
+        #${BOOKMARK_EMOJI_MENU_ID} {
+          border-color: rgba(148, 163, 184, 0.35);
+          background: rgba(17, 24, 39, 0.96);
+          color: #e5e7eb;
+        }
+        #${BOOKMARK_EMOJI_MENU_ID} .mr-bookmark-emoji-addrow input,
+        #${BOOKMARK_EMOJI_MENU_ID} .mr-bookmark-emoji-addrow button {
+          border-color: rgba(148, 163, 184, 0.45);
+          background: rgba(31, 41, 55, 0.96);
+          color: #e5e7eb;
+        }
       }
       #${STATUS_ID}.working {
         color: #7c4a03;
@@ -518,15 +756,21 @@
       [data-mr-index-tools="1"] {
         position: sticky;
         top: 56px;
-        display: flex;
+        display: grid;
+        justify-items: end;
         width: fit-content;
         margin-left: auto;
         margin-right: 10px;
         margin-top: 4px;
         margin-bottom: 6px;
-        gap: 4px;
+        gap: 3px;
         pointer-events: none;
         z-index: 4;
+      }
+      [data-mr-index-top="1"] {
+        display: flex;
+        align-items: center;
+        gap: 4px;
       }
       [data-mr-index-badge="1"] {
         display: block;
@@ -558,9 +802,74 @@
         line-height: 1;
         padding: 0;
       }
-      [data-mr-index-add="1"]:disabled {
-        cursor: default;
-        opacity: .6;
+      [data-mr-index-emoji-row="1"] {
+        display: none;
+        gap: 2px;
+        align-items: center;
+      }
+      [data-mr-index-emoji-row="1"] span {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 11px;
+        line-height: 1;
+        border-radius: 999px;
+        padding: 2px 4px;
+        border: 1px solid rgba(148, 163, 184, 0.35);
+        background: rgba(255, 255, 255, 0.86);
+      }
+      #${BOOKMARK_EMOJI_MENU_ID} {
+        position: fixed;
+        display: none;
+        width: 220px;
+        z-index: 2147483647;
+        border-radius: 10px;
+        border: 1px solid rgba(148, 163, 184, 0.45);
+        background: rgba(255, 255, 255, 0.98);
+        box-shadow: 0 14px 38px rgba(15, 23, 42, 0.2);
+        backdrop-filter: blur(2px);
+        padding: 8px;
+        color: #111827;
+      }
+      #${BOOKMARK_EMOJI_MENU_ID} .mr-bookmark-emoji-title {
+        font-size: 12px;
+        font-weight: 600;
+        margin-bottom: 6px;
+      }
+      #${BOOKMARK_EMOJI_MENU_ID} .mr-bookmark-emoji-list {
+        max-height: 160px;
+        overflow-y: auto;
+        display: grid;
+        gap: 4px;
+        margin-bottom: 8px;
+      }
+      #${BOOKMARK_EMOJI_MENU_ID} label {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+      }
+      #${BOOKMARK_EMOJI_MENU_ID} .mr-bookmark-emoji-addrow {
+        display: flex;
+        gap: 6px;
+      }
+      #${BOOKMARK_EMOJI_MENU_ID} .mr-bookmark-emoji-addrow input,
+      #${BOOKMARK_EMOJI_MENU_ID} .mr-bookmark-emoji-addrow button {
+        height: 26px;
+        border-radius: 8px;
+        border: 1px solid rgba(148, 163, 184, 0.55);
+        background: #fff;
+        font-size: 12px;
+        color: #111827;
+      }
+      #${BOOKMARK_EMOJI_MENU_ID} .mr-bookmark-emoji-addrow input {
+        flex: 1;
+        min-width: 0;
+        padding: 0 8px;
+      }
+      #${BOOKMARK_EMOJI_MENU_ID} .mr-bookmark-emoji-addrow button {
+        padding: 0 8px;
+        cursor: pointer;
       }
       [${GROUP_ATTR}="1"] {
         margin: 8px auto;
@@ -912,8 +1221,10 @@
     if (nextKey === routeKey) return false;
     clearSecondaryGroups();
     routeKey = nextKey;
-    bookmarks = loadBookmarks();
-    rerenderBookmarkSelect();
+    bookmarksByIndex = loadBookmarks();
+    mergeUsedEmojisIntoCatalog();
+    closeBookmarkEmojiMenu();
+    rerenderBookmarkDecorations();
     startupDone = false;
     showStatus("收合中", "working");
     scheduleCompact(30);
@@ -1103,6 +1414,22 @@
   }
 
   document.addEventListener("click", async (e) => {
+    const emojiMenuAddBtn = e.target.closest(`[${BOOKMARK_EMOJI_ADD_ATTR}="1"]`);
+    if (emojiMenuAddBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const input = document.getElementById(BOOKMARK_EMOJI_INPUT_ID);
+      const rawValue = input ? input.value : "";
+      const result = addEmojiToCatalog(rawValue);
+      if (!result.ok) {
+        showStatus(result.reason === "exists" ? `已存在 emoji ${result.emoji}` : "請輸入有效 emoji", "done");
+        return;
+      }
+      if (input) input.value = "";
+      showStatus(`已新增 emoji ${result.emoji}`, "done");
+      return;
+    }
+
     const groupExpandBtn = e.target.closest('[data-mr-action="group-expand"]');
     if (groupExpandBtn) {
       e.preventDefault();
@@ -1124,10 +1451,11 @@
           showStatus("請輸入有效編號", "done");
           return;
         }
-        if (addBookmark(index)) {
-          showStatus(`已加入書籤 #${index}`, "done");
+        const changed = setBookmarkEmoji(index, getDefaultBookmarkEmoji(), true);
+        if (changed) {
+          showStatus(`已加入預設書籤 #${index}`, "done");
         } else {
-          showStatus(`書籤 #${index} 已存在`, "done");
+          showStatus(`#${index} 已有預設書籤`, "done");
         }
         if (input) input.value = "";
         return;
@@ -1139,10 +1467,10 @@
           showStatus("請先選擇書籤", "done");
           return;
         }
-        if (removeBookmark(index)) {
-          showStatus(`已刪除書籤 #${index}`, "done");
+        if (removeAllBookmarkEmojis(index)) {
+          showStatus(`已清空 #${index} 的書籤類別`, "done");
         } else {
-          showStatus(`書籤 #${index} 不存在`, "done");
+          showStatus(`#${index} 沒有書籤可清空`, "done");
         }
         return;
       }
@@ -1159,11 +1487,12 @@
       e.stopPropagation();
       const badgeIndex = Number(indexAddBtn.getAttribute(INDEX_VALUE_ATTR));
       if (!Number.isInteger(badgeIndex) || badgeIndex <= 0) return;
-      if (addBookmark(badgeIndex)) {
-        showStatus(`已加入書籤 #${badgeIndex}`, "done");
-      } else {
-        showStatus(`書籤 #${badgeIndex} 已存在`, "done");
+      const menu = document.getElementById(BOOKMARK_EMOJI_MENU_ID);
+      if (menu && menu.style.display !== "none" && Number(bookmarkMenuIndex) === badgeIndex) {
+        closeBookmarkEmojiMenu();
+        return;
       }
+      openBookmarkEmojiMenu(indexAddBtn, badgeIndex);
       return;
     }
 
@@ -1174,13 +1503,19 @@
       const host = indexBadge.closest("[data-message-author-role]");
       const badgeIndex = Number(indexBadge.getAttribute(INDEX_VALUE_ATTR));
       if (e.shiftKey && Number.isInteger(badgeIndex) && badgeIndex > 0) {
-        const added = toggleBookmark(badgeIndex);
-        if (added === true) showStatus(`已加入書籤 #${badgeIndex}`, "done");
-        if (added === false) showStatus(`已取消書籤 #${badgeIndex}`, "done");
+        const added = toggleDefaultBookmark(badgeIndex);
+        const emoji = getDefaultBookmarkEmoji();
+        if (added === true) showStatus(`已加入 #${badgeIndex} 的 ${emoji} 類別`, "done");
+        if (added === false) showStatus(`已取消 #${badgeIndex} 的 ${emoji} 類別`, "done");
         return;
       }
       focusMessageTop(host);
       return;
+    }
+
+    const clickedInsideEmojiMenu = e.target.closest(`#${BOOKMARK_EMOJI_MENU_ID}`);
+    if (!clickedInsideEmojiMenu) {
+      closeBookmarkEmojiMenu();
     }
 
     const inlineCollapseBtn = e.target.closest(".mr-inline-collapse");
@@ -1239,6 +1574,19 @@
   });
 
   document.addEventListener("change", (e) => {
+    const emojiCheck = e.target.closest(`[${BOOKMARK_EMOJI_CHECK_ATTR}="1"]`);
+    if (emojiCheck) {
+      const index = Number(bookmarkMenuIndex);
+      if (!Number.isInteger(index) || index <= 0) return;
+      const emoji = emojiCheck.getAttribute(BOOKMARK_EMOJI_ITEM_ATTR) || "";
+      const enabled = Boolean(emojiCheck.checked);
+      const changed = setBookmarkEmoji(index, emoji, enabled);
+      if (!changed) return;
+      showStatus(enabled ? `#${index} 已加入 ${emoji}` : `#${index} 已取消 ${emoji}`, "done");
+      renderBookmarkEmojiMenu(index);
+      return;
+    }
+
     const select = e.target.closest(`#${BOOKMARK_SELECT_ID}`);
     if (!select) return;
     const index = Number(select.value);
@@ -1288,7 +1636,9 @@
   });
 
   ensureStyles();
-  bookmarks = loadBookmarks();
+  bookmarkEmojiCatalog = loadEmojiCatalog();
+  bookmarksByIndex = loadBookmarks();
+  mergeUsedEmojisIntoCatalog();
   ensureBookmarkPanel();
   updateBookmarkPanelPosition();
   showStatus("收合中", "working");
@@ -1314,7 +1664,13 @@
       scheduleSecondaryGrouping();
     }
   }, PERIODIC_COMPACT_MS);
-  window.addEventListener("resize", updateBookmarkPanelPosition);
+  window.addEventListener("resize", () => {
+    updateBookmarkPanelPosition();
+    const menu = document.getElementById(BOOKMARK_EMOJI_MENU_ID);
+    if (menu && menu.style.display !== "none") {
+      closeBookmarkEmojiMenu();
+    }
+  });
   setInterval(() => {
     flushWrites().catch((err) => console.error("[MR] periodic flush failed:", err));
   }, 2000);
