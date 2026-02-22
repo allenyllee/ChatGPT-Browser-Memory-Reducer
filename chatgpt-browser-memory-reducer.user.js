@@ -715,10 +715,22 @@
     const menu = menuNode || ensureBookmarkEmojiMenu();
     if (!anchor) return;
     const rect = anchor.getBoundingClientRect();
-    const width = 220;
     const pad = 8;
-    const top = Math.min(window.innerHeight - 16, rect.bottom + 6);
-    const left = Math.max(pad, Math.min(window.innerWidth - width - pad, rect.right - width));
+    const gap = 6;
+    const width = menu.offsetWidth || 220;
+    const menuHeight = Math.max(menu.offsetHeight || 0, 120);
+    const viewportHeight = window.innerHeight;
+    const viewportWidth = window.innerWidth;
+    const spaceBelow = viewportHeight - rect.bottom - gap - pad;
+    const spaceAbove = rect.top - gap - pad;
+    const canOpenDown = spaceBelow >= menuHeight;
+    const canOpenUp = spaceAbove >= menuHeight;
+    const openDown = canOpenDown || (!canOpenUp && spaceBelow >= spaceAbove);
+
+    const rawTop = openDown ? rect.bottom + gap : rect.top - menuHeight - gap;
+    const maxTop = Math.max(pad, viewportHeight - menuHeight - pad);
+    const top = Math.max(pad, Math.min(maxTop, rawTop));
+    const left = Math.max(pad, Math.min(viewportWidth - width - pad, rect.right - width));
     menu.style.top = `${Math.round(top)}px`;
     menu.style.left = `${Math.round(left)}px`;
   }
