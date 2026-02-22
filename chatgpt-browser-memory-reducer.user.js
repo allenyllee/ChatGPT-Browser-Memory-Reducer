@@ -546,7 +546,6 @@
       panel.id = BOOKMARK_PANEL_ID;
       panel.innerHTML = `
         <input id="${BOOKMARK_INPUT_ID}" type="number" min="1" step="1" placeholder="編號">
-        <button type="button" data-mr-action="bookmark-add">加入預設</button>
         <select id="${BOOKMARK_SELECT_ID}"></select>
         <button type="button" data-mr-action="bookmark-collapse-visible">收合已展開</button>
         <button type="button" data-mr-action="bookmark-filter-menu">篩選</button>
@@ -1747,22 +1746,6 @@
       if (!action) return;
       e.preventDefault();
       e.stopPropagation();
-      if (action === "bookmark-add") {
-        const input = document.getElementById(BOOKMARK_INPUT_ID);
-        const index = Number(input && input.value);
-        if (!Number.isInteger(index) || index <= 0) {
-          showStatus("請輸入有效編號", "done");
-          return;
-        }
-        const changed = setBookmarkEmoji(index, getDefaultBookmarkEmoji(), true);
-        if (changed) {
-          showStatus(`已加入預設書籤 #${index}`, "done");
-        } else {
-          showStatus(`#${index} 已有預設書籤`, "done");
-        }
-        if (input) input.value = "";
-        return;
-      }
       if (action === "bookmark-filter-menu") {
         const menu = document.getElementById(BOOKMARK_FILTER_MENU_ID);
         if (menu && menu.style.display !== "none") {
