@@ -1952,6 +1952,29 @@
     }, BOOKMARK_INPUT_JUMP_DEBOUNCE_MS);
   });
 
+  document.addEventListener("keydown", (e) => {
+    const input = e.target.closest(`#${BOOKMARK_INPUT_ID}`);
+    if (!input || e.key !== "Enter") return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (bookmarkInputJumpTimer) {
+      clearTimeout(bookmarkInputJumpTimer);
+      bookmarkInputJumpTimer = null;
+    }
+
+    const index = Number(String(input.value || "").trim());
+    if (!Number.isInteger(index) || index <= 0) {
+      showStatus("請輸入有效編號", "done");
+      return;
+    }
+
+    if (jumpToMessageIndex(index)) {
+      showStatus(`已跳轉到 #${index}`, "done");
+    } else {
+      showStatus(`找不到 #${index}`, "done");
+    }
+  });
+
   const observer = new MutationObserver((records) => {
     const routeChanged = checkRouteChange();
     const streaming = isStreamingNow();
