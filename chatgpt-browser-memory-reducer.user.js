@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Browser Memory Reducer (Expandable + IndexedDB)
 // @namespace    local.chatgpt.browser.memory.reducer
-// @version      0.9.1
+// @version      0.9.2
 // @description  Compress old ChatGPT messages to reduce browser memory usage and lag, with expandable restore from IndexedDB.
 // @author       allenyllee
 // @downloadURL  https://gist.github.com/b1e7051e064b4ad8084efa16edc4fbf8/raw/chatgpt-browser-memory-reducer.user.js
@@ -45,6 +45,7 @@
   const BOOKMARK_FILTER_MENU_ID = "mr-bookmark-filter-menu";
   const BOOKMARK_FILTER_CHECK_ATTR = "data-mr-bookmark-filter-check";
   const BOOKMARK_FILTER_ITEM_ATTR = "data-mr-bookmark-filter-item";
+  const BOOKMARK_INPUT_JUMP_DEBOUNCE_MS = 140;
   const INDEX_TOOLS_ATTR = "data-mr-index-tools";
   const INDEX_TOP_ATTR = "data-mr-index-top";
   const INDEX_BADGE_ATTR = "data-mr-index-badge";
@@ -81,6 +82,7 @@
   let bookmarkEmojiCatalog = [...DEFAULT_BOOKMARK_EMOJIS];
   let bookmarkFilterSelected = new Set();
   let bookmarkMenuIndex = null;
+  let bookmarkInputJumpTimer = null;
 
   const hotCache = new Map();
   const writeQueue = [];
@@ -1927,6 +1929,27 @@
     } else {
       showStatus(`找不到 #${index}`, "done");
     }
+  });
+
+  document.addEventListener("input", (e) => {
+    const input = e.target.closest(`#${BOOKMARK_INPUT_ID}`);
+    if (!input) return;
+    if (bookmarkInputJumpTimer) {
+      clearTimeout(bookmarkInputJumpTimer);
+      bookmarkInputJumpTimer = null;
+    }
+
+    const raw = String(input.value || "").trim();
+    if (!raw) return;
+    if (!/^\d+$/.test(raw)) return;
+
+    const index = Number(raw);
+    if (!Number.isInteger(index) || index <= 0) return;
+
+    bookmarkInputJumpTimer = setTimeout(() => {
+      bookmarkInputJumpTimer = null;
+      jumpToMessageIndex(index);
+    }, BOOKMARK_INPUT_JUMP_DEBOUNCE_MS);
   });
 
   const observer = new MutationObserver((records) => {
