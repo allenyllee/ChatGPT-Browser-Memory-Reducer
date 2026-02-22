@@ -569,7 +569,7 @@
         <input id="${BOOKMARK_INPUT_ID}" type="number" min="1" step="1" placeholder="編號">
         <button type="button" data-mr-action="bookmark-add">加入預設</button>
         <select id="${BOOKMARK_SELECT_ID}"></select>
-        <button type="button" data-mr-action="bookmark-filter-toggle">只看書籤</button>
+        <button type="button" data-mr-action="bookmark-collapse-visible">收合已展開</button>
         <button type="button" data-mr-action="bookmark-filter-menu">篩選</button>
         <button type="button" data-mr-action="bookmark-remove">清空類別</button>
         <button type="button" data-mr-action="group-regroup-all">重收合</button>
@@ -585,20 +585,16 @@
     const panel = document.getElementById(BOOKMARK_PANEL_ID);
     if (!panel) return;
     const btn = panel.querySelector('[data-mr-action="bookmark-filter-menu"]');
-    const toggleBtn = panel.querySelector('[data-mr-action="bookmark-filter-toggle"]');
+    const collapseBtn = panel.querySelector('[data-mr-action="bookmark-collapse-visible"]');
     if (!btn) return;
+    if (collapseBtn) {
+      collapseBtn.textContent = "收合已展開";
+      collapseBtn.setAttribute("title", "在目前篩選條件下，將可見的展開訊息全部收合");
+    }
     if (!isBookmarkFilterActive()) {
-      if (toggleBtn) {
-        toggleBtn.textContent = "只看書籤";
-        toggleBtn.setAttribute("title", "一鍵切換成僅顯示有書籤訊息 + 最後 10 筆");
-      }
       btn.textContent = "篩選: 全部";
       btn.setAttribute("title", "未勾選任何類別，顯示全部訊息");
       return;
-    }
-    if (toggleBtn) {
-      toggleBtn.textContent = "顯示全部";
-      toggleBtn.setAttribute("title", "一鍵切換成顯示全部訊息");
     }
     btn.textContent = `篩選:${bookmarkFilterSelected.size}`;
     btn.setAttribute("title", "僅顯示所選書籤類別與最後 10 筆訊息");
@@ -626,6 +622,25 @@
     if (options.showStatus !== false) {
       showStatus("已套用：顯示全部訊息", "done");
     }
+  }
+
+  async function collapseExpandedMessagesInCurrentView() {
+    const expandedHosts = Array.from(document.querySelectorAll(`[${EXPANDED_LOCK_ATTR}="1"]`));
+    let collapsed = 0;
+    const hadManualFilterOpen = Boolean(document.querySelector(`[${FILTER_GROUP_MANUAL_OPEN_ATTR}="1"]`));
+    for (const host of expandedHosts) {
+      const displayNode = getMessageDisplayNode(host) || host;
+      if (!displayNode.isConnected) continue;
+      if (window.getComputedStyle(displayNode).display === "none") continue;
+      await collapseExpandedMessage(host, { focus: false });
+      collapsed += 1;
+    }
+    if (collapsed > 0 || hadManualFilterOpen) {
+      scheduleFullIndexSync(60);
+      scheduleSecondaryGrouping(80);
+      scheduleBookmarkFilterApply(80, { resetManualOpen: true });
+    }
+    return { collapsed, regrouped: hadManualFilterOpen };
   }
 
   function ensureBookmarkEmojiMenu() {
@@ -1928,11 +1943,16 @@
         }
         return;
       }
-      if (action === "bookmark-filter-toggle") {
-        if (isBookmarkFilterActive()) {
-          setBookmarkFilterShowAll();
+      if (action === "bookmark-collapse-visible") {
+        const result = await collapseExpandedMessagesInCurrentView();
+        if (result.collapsed > 0 && result.regrouped) {
+          showStatus(`已收合 ${result.collapsed} 則展開訊息，並重建篩選區段`, "done");
+        } else if (result.collapsed > 0) {
+          showStatus(`已收合 ${result.collapsed} 則展開訊息`, "done");
+        } else if (result.regrouped) {
+          showStatus("已重建篩選區段", "done");
         } else {
-          setBookmarkFilterAllSelected();
+          showStatus("目前沒有可收合的展開訊息", "done");
         }
         return;
       }
