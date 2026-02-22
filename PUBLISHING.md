@@ -29,3 +29,18 @@ Goal: keep installation simple via Gist Raw, and keep docs/source in this GitHub
 
 - Gist file order cannot be pinned; single-file Gist avoids that issue.
 - If you need multiple scripts, create one install Gist per script.
+
+## Optional: Auto Publish via GitHub Actions
+
+This repo includes `.github/workflows/publish-gist.yml`.
+
+Set these repository secrets before enabling auto publish:
+
+- `GIST_TOKEN`: GitHub Personal Access Token (classic) with `gist` scope
+- `GIST_ID`: target gist ID
+- `GIST_FILE`: target filename inside the gist (for example `chatgpt-browser-memory-reducer.user.js`)
+
+Trigger behavior:
+
+- Auto runs on push to `main` when `chatgpt-browser-memory-reducer.user.js` changes
+- Can also run manually via `workflow_dispatch`
