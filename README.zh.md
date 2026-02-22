@@ -1,5 +1,9 @@
 # ChatGPT Browser Memory Reducer 使用說明
 
+一鍵安裝：
+
+- https://raw.githubusercontent.com/allenyllee/ChatGPT-Browser-Memory-Reducer/main/chatgpt-browser-memory-reducer.user.js
+
 `chatgpt-browser-memory-reducer.user.js` 是一個給 Tampermonkey / Violentmonkey 的 userscript，目標是降低 ChatGPT 長對話在瀏覽器中的記憶體占用與卡頓。
 
 它會把較舊訊息收合成摘要卡片，完整內容存到 IndexedDB，並可隨時展開；同時提供訊息索引、emoji 書籤與書籤篩選。
@@ -32,10 +36,6 @@
 ## 2) 安裝 userscript
 
 將 `chatgpt-browser-memory-reducer.user.js` 匯入腳本管理器，或使用腳本內 `@downloadURL` 安裝。
-
-可直接安裝連結：
-
-- https://raw.githubusercontent.com/allenyllee/ChatGPT-Browser-Memory-Reducer/main/chatgpt-browser-memory-reducer.user.js
 
 ## 3) 開啟 ChatGPT
 

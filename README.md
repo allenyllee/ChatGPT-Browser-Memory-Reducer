@@ -1,5 +1,9 @@
 # ChatGPT Browser Memory Reducer
 
+One-click install:
+
+- https://raw.githubusercontent.com/allenyllee/ChatGPT-Browser-Memory-Reducer/main/chatgpt-browser-memory-reducer.user.js
+
 Chinese version: [`README.zh.md`](README.zh.md)
 
 `chatgpt-browser-memory-reducer.user.js` is a userscript for Tampermonkey / Violentmonkey that reduces browser memory usage and UI lag in long ChatGPT conversations.
@@ -34,10 +38,6 @@ Use one of the following:
 ## 2) Install the script
 
 Import `chatgpt-browser-memory-reducer.user.js` into your userscript manager, or install via the script `@downloadURL`.
-
-Direct install URL:
-
-- https://raw.githubusercontent.com/allenyllee/ChatGPT-Browser-Memory-Reducer/main/chatgpt-browser-memory-reducer.user.js
 
 ## 3) Open ChatGPT
 
