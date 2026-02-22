@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Browser Memory Reducer (Expandable + IndexedDB)
 // @namespace    local.chatgpt.browser.memory.reducer
-// @version      0.9.3
+// @version      0.9.4
 // @description  Compress old ChatGPT messages to reduce browser memory usage and lag, with expandable restore from IndexedDB.
 // @author       allenyllee
 // @license      MIT
@@ -64,6 +64,122 @@
   const SCROLL_MAX_MS = 1800;
   const DEFAULT_BOOKMARK_EMOJIS = ["⭐", "❤️", "🔥", "✅", "📌"];
   const MAX_EMOJI_TAG_LENGTH = 8;
+  const LANG = String(navigator.language || "en").toLowerCase().startsWith("zh") ? "zh" : "en";
+  const I18N = {
+    zh: {
+      blankMessage: "[空白訊息]",
+      compactIndexLabel: "第 {index}/{total} 則",
+      compactIndexUnknown: "第 ? 則",
+      compactedMessage: "已壓縮 {role} 訊息 ({indexLabel})",
+      expand: "展開",
+      manageEmojiBookmarks: "管理 emoji 書籤",
+      badgeTitleBookmarked: "點擊捲動到這則對話頂端。Shift+點擊切換預設 emoji 書籤。",
+      badgeTitleUnbookmarked: "點擊捲動到這則對話頂端。Shift+點擊可加入預設 emoji 書籤。",
+      bookmarkEmptyOption: "書籤（空）",
+      bookmarkSelectOption: "選擇書籤編號",
+      bookmarkInputPlaceholder: "編號",
+      collapseExpandedButton: "收合已展開",
+      filterButton: "篩選",
+      collapseVisibleTitle: "在目前篩選條件下，將可見的展開訊息全部收合",
+      filterAllLabel: "篩選: 全部",
+      filterAllTitle: "未勾選任何類別，顯示全部訊息",
+      filterSelectedLabel: "篩選:{count}",
+      filterSelectedTitle: "僅顯示所選書籤類別與最後 10 筆訊息",
+      statusAppliedFilterAllSelected: "已套用：僅顯示所有書籤類別 + 最後 10 筆",
+      statusAppliedShowAll: "已套用：顯示全部訊息",
+      emojiMenuTitle: "選擇書籤類別",
+      emojiInputPlaceholder: "新增 emoji",
+      emojiAddButton: "新增",
+      filterMenuTitle: "顯示哪些書籤類別",
+      filterMenuNote: "未勾選任何類別時，顯示全部訊息。",
+      filterSelectAll: "全選",
+      filterClear: "全不選",
+      emojiMenuTitleForIndex: "選擇 #{index} 的書籤類別",
+      inlineCollapseButton: "收合此則",
+      groupMeta: "篩選隱藏（{count} 則）",
+      groupTitle: "第 {range} 則未命中篩選書籤類別",
+      groupExpandButton: "展開此區段",
+      statusCompacting: "收合中",
+      statusCompactDone: "收合完成",
+      statusEmojiExists: "已存在 emoji {emoji}",
+      statusInvalidEmoji: "請輸入有效 emoji",
+      statusEmojiAdded: "已新增 emoji {emoji}",
+      statusCollapsedAndRegrouped: "已收合 {count} 則展開訊息，並重建篩選區段",
+      statusCollapsedCount: "已收合 {count} 則展開訊息",
+      statusRegrouped: "已重建篩選區段",
+      statusNothingToCollapse: "目前沒有可收合的展開訊息",
+      statusBookmarkEnabledForIndex: "已加入 #{index} 的 {emoji} 類別",
+      statusBookmarkDisabledForIndex: "已取消 #{index} 的 {emoji} 類別",
+      loading: "載入中...",
+      filterClearedShowAll: "篩選已清空，顯示全部訊息",
+      filteringCount: "篩選中：{count} 種類別",
+      statusEmojiEnabledForIndex: "#{index} 已加入 {emoji}",
+      statusEmojiDisabledForIndex: "#{index} 已取消 {emoji}",
+      statusJumpedTo: "已跳轉到 #{index}",
+      statusNotFound: "找不到 #{index}",
+      statusInvalidNumber: "請輸入有效編號",
+    },
+    en: {
+      blankMessage: "[Empty message]",
+      compactIndexLabel: "Message {index}/{total}",
+      compactIndexUnknown: "Message ?",
+      compactedMessage: "Compacted {role} message ({indexLabel})",
+      expand: "Expand",
+      manageEmojiBookmarks: "Manage emoji bookmarks",
+      badgeTitleBookmarked: "Click to scroll to this message. Shift+Click toggles the default emoji bookmark.",
+      badgeTitleUnbookmarked: "Click to scroll to this message. Shift+Click adds the default emoji bookmark.",
+      bookmarkEmptyOption: "Bookmarks (empty)",
+      bookmarkSelectOption: "Select bookmarked index",
+      bookmarkInputPlaceholder: "Index",
+      collapseExpandedButton: "Collapse expanded",
+      filterButton: "Filter",
+      collapseVisibleTitle: "Collapse all visible expanded messages under current filter",
+      filterAllLabel: "Filter: all",
+      filterAllTitle: "No category selected; showing all messages",
+      filterSelectedLabel: "Filter:{count}",
+      filterSelectedTitle: "Show only selected bookmark categories and latest 10 messages",
+      statusAppliedFilterAllSelected: "Applied: show selected categories + latest 10 messages",
+      statusAppliedShowAll: "Applied: show all messages",
+      emojiMenuTitle: "Select bookmark categories",
+      emojiInputPlaceholder: "Add emoji",
+      emojiAddButton: "Add",
+      filterMenuTitle: "Which bookmark categories to show",
+      filterMenuNote: "If none selected, all messages are shown.",
+      filterSelectAll: "Select all",
+      filterClear: "Clear all",
+      emojiMenuTitleForIndex: "Select bookmark categories for #{index}",
+      inlineCollapseButton: "Collapse this message",
+      groupMeta: "Hidden by filter ({count} messages)",
+      groupTitle: "Messages {range} do not match selected bookmark categories",
+      groupExpandButton: "Expand this section",
+      statusCompacting: "Compacting",
+      statusCompactDone: "Compaction complete",
+      statusEmojiExists: "Emoji already exists: {emoji}",
+      statusInvalidEmoji: "Please enter a valid emoji",
+      statusEmojiAdded: "Added emoji {emoji}",
+      statusCollapsedAndRegrouped: "Collapsed {count} expanded messages and rebuilt filter groups",
+      statusCollapsedCount: "Collapsed {count} expanded messages",
+      statusRegrouped: "Rebuilt filter groups",
+      statusNothingToCollapse: "No expanded messages to collapse",
+      statusBookmarkEnabledForIndex: "Added {emoji} category to #{index}",
+      statusBookmarkDisabledForIndex: "Removed {emoji} category from #{index}",
+      loading: "Loading...",
+      filterClearedShowAll: "Filter cleared, showing all messages",
+      filteringCount: "Filtering: {count} categories",
+      statusEmojiEnabledForIndex: "#{index} added {emoji}",
+      statusEmojiDisabledForIndex: "#{index} removed {emoji}",
+      statusJumpedTo: "Jumped to #{index}",
+      statusNotFound: "Cannot find #{index}",
+      statusInvalidNumber: "Please enter a valid index",
+    },
+  };
+
+  function t(key, vars = {}) {
+    const table = I18N[LANG] || I18N.en;
+    const fallback = I18N.en[key] || key;
+    const template = table[key] || fallback;
+    return template.replace(/\{(\w+)\}/g, (_, name) => String(vars[name] !== undefined ? vars[name] : ""));
+  }
 
   let seq = 1;
   let dbPromise = null;
@@ -139,22 +255,22 @@
   }
 
   function previewOf(text) {
-    const t = String(text || "").replace(/\s+/g, " ").trim();
-    if (!t) return "[空白訊息]";
-    if (t.length <= PREVIEW_CHARS) return t;
-    return t.slice(0, PREVIEW_CHARS) + " …";
+    const normalized = String(text || "").replace(/\s+/g, " ").trim();
+    if (!normalized) return t("blankMessage");
+    if (normalized.length <= PREVIEW_CHARS) return normalized;
+    return normalized.slice(0, PREVIEW_CHARS) + " …";
   }
 
   function compactUI(role, preview, id, messageIndex, totalMessages) {
     const indexLabel =
       Number.isInteger(messageIndex) && Number.isInteger(totalMessages)
-        ? `第 ${messageIndex}/${totalMessages} 則`
-        : "第 ? 則";
+        ? t("compactIndexLabel", { index: messageIndex, total: totalMessages })
+        : t("compactIndexUnknown");
     return `
       <div class="mr-compact-card" style="border:1px solid rgba(128,128,128,.35);border-radius:10px;padding:10px 12px;background:rgba(127,127,127,.08)">
-        <div style="font-size:12px;opacity:.8;margin-bottom:6px">已壓縮 ${esc(role)} 訊息 (${indexLabel})</div>
+        <div style="font-size:12px;opacity:.8;margin-bottom:6px">${esc(t("compactedMessage", { role, indexLabel }))}</div>
         <div style="white-space:pre-wrap;font-size:13px;line-height:1.45">${esc(preview)}</div>
-        <button class="mr-toggle" data-mr-action="expand" data-row-id="${id}" style="margin-top:8px">展開</button>
+        <button class="mr-toggle" data-mr-action="expand" data-row-id="${id}" style="margin-top:8px">${esc(t("expand"))}</button>
       </div>
     `;
   }
@@ -226,7 +342,7 @@
       addBtn.type = "button";
       addBtn.setAttribute(INDEX_ADD_ATTR, "1");
       addBtn.textContent = "+";
-      addBtn.setAttribute("title", "管理 emoji 書籤");
+      addBtn.setAttribute("title", t("manageEmojiBookmarks"));
       top.appendChild(addBtn);
     }
     if (!emojiRow) {
@@ -237,9 +353,7 @@
     const viewLabel = label;
     badge.setAttribute(
       "title",
-      bookmarked
-        ? "點擊捲動到這則對話頂端。Shift+點擊切換預設 emoji 書籤。"
-        : "點擊捲動到這則對話頂端。Shift+點擊可加入預設 emoji 書籤。"
+      bookmarked ? t("badgeTitleBookmarked") : t("badgeTitleUnbookmarked")
     );
     if (Number.isInteger(indexValue)) {
       badge.setAttribute(INDEX_VALUE_ATTR, String(indexValue));
@@ -509,11 +623,11 @@
     const previous = Number(select.value);
     const indexes = getBookmarkedIndexes();
     if (!indexes.length) {
-      select.innerHTML = '<option value="">書籤（空）</option>';
+      select.innerHTML = `<option value="">${esc(t("bookmarkEmptyOption"))}</option>`;
       return;
     }
     select.innerHTML =
-      '<option value="">選擇書籤編號</option>' +
+      `<option value="">${esc(t("bookmarkSelectOption"))}</option>` +
       indexes.map((n) => `<option value="${n}">${n}</option>`).join("");
     if (Number.isInteger(previous) && indexes.includes(previous)) {
       select.value = String(previous);
@@ -546,10 +660,10 @@
       panel = document.createElement("div");
       panel.id = BOOKMARK_PANEL_ID;
       panel.innerHTML = `
-        <input id="${BOOKMARK_INPUT_ID}" type="number" min="1" step="1" placeholder="編號">
+        <input id="${BOOKMARK_INPUT_ID}" type="number" min="1" step="1" placeholder="${esc(t("bookmarkInputPlaceholder"))}">
         <select id="${BOOKMARK_SELECT_ID}"></select>
-        <button type="button" data-mr-action="bookmark-collapse-visible">收合已展開</button>
-        <button type="button" data-mr-action="bookmark-filter-menu">篩選</button>
+        <button type="button" data-mr-action="bookmark-collapse-visible">${esc(t("collapseExpandedButton"))}</button>
+        <button type="button" data-mr-action="bookmark-filter-menu">${esc(t("filterButton"))}</button>
       `;
       document.body.appendChild(panel);
     }
@@ -565,16 +679,16 @@
     const collapseBtn = panel.querySelector('[data-mr-action="bookmark-collapse-visible"]');
     if (!btn) return;
     if (collapseBtn) {
-      collapseBtn.textContent = "收合已展開";
-      collapseBtn.setAttribute("title", "在目前篩選條件下，將可見的展開訊息全部收合");
+      collapseBtn.textContent = t("collapseExpandedButton");
+      collapseBtn.setAttribute("title", t("collapseVisibleTitle"));
     }
     if (!isBookmarkFilterActive()) {
-      btn.textContent = "篩選: 全部";
-      btn.setAttribute("title", "未勾選任何類別，顯示全部訊息");
+      btn.textContent = t("filterAllLabel");
+      btn.setAttribute("title", t("filterAllTitle"));
       return;
     }
-    btn.textContent = `篩選:${bookmarkFilterSelected.size}`;
-    btn.setAttribute("title", "僅顯示所選書籤類別與最後 10 筆訊息");
+    btn.textContent = t("filterSelectedLabel", { count: bookmarkFilterSelected.size });
+    btn.setAttribute("title", t("filterSelectedTitle"));
   }
 
   function setBookmarkFilterAllSelected(options = {}) {
@@ -584,7 +698,7 @@
     updateBookmarkFilterButtonLabel();
     scheduleBookmarkFilterApply(40, { resetManualOpen: true });
     if (options.showStatus !== false) {
-      showStatus("已套用：僅顯示所有書籤類別 + 最後 10 筆", "done");
+      showStatus(t("statusAppliedFilterAllSelected"), "done");
     }
   }
 
@@ -595,7 +709,7 @@
     updateBookmarkFilterButtonLabel();
     scheduleBookmarkFilterApply(40, { resetManualOpen: true });
     if (options.showStatus !== false) {
-      showStatus("已套用：顯示全部訊息", "done");
+      showStatus(t("statusAppliedShowAll"), "done");
     }
   }
 
@@ -623,11 +737,11 @@
     menu = document.createElement("div");
     menu.id = BOOKMARK_EMOJI_MENU_ID;
     menu.innerHTML = `
-      <div class="mr-bookmark-emoji-title">選擇書籤類別</div>
+      <div class="mr-bookmark-emoji-title">${esc(t("emojiMenuTitle"))}</div>
       <div class="mr-bookmark-emoji-list"></div>
       <div class="mr-bookmark-emoji-addrow">
-        <input id="${BOOKMARK_EMOJI_INPUT_ID}" type="text" maxlength="${MAX_EMOJI_TAG_LENGTH}" placeholder="新增 emoji">
-        <button type="button" ${BOOKMARK_EMOJI_ADD_ATTR}="1">新增</button>
+        <input id="${BOOKMARK_EMOJI_INPUT_ID}" type="text" maxlength="${MAX_EMOJI_TAG_LENGTH}" placeholder="${esc(t("emojiInputPlaceholder"))}">
+        <button type="button" ${BOOKMARK_EMOJI_ADD_ATTR}="1">${esc(t("emojiAddButton"))}</button>
       </div>
     `;
     document.body.appendChild(menu);
@@ -640,12 +754,12 @@
     menu = document.createElement("div");
     menu.id = BOOKMARK_FILTER_MENU_ID;
     menu.innerHTML = `
-      <div class="mr-bookmark-filter-title">顯示哪些書籤類別</div>
-      <div class="mr-bookmark-filter-note">未勾選任何類別時，顯示全部訊息。</div>
+      <div class="mr-bookmark-filter-title">${esc(t("filterMenuTitle"))}</div>
+      <div class="mr-bookmark-filter-note">${esc(t("filterMenuNote"))}</div>
       <div class="mr-bookmark-filter-list"></div>
       <div class="mr-bookmark-filter-actions">
-        <button type="button" data-mr-action="bookmark-filter-select-all">全選</button>
-        <button type="button" data-mr-action="bookmark-filter-clear">全不選</button>
+        <button type="button" data-mr-action="bookmark-filter-select-all">${esc(t("filterSelectAll"))}</button>
+        <button type="button" data-mr-action="bookmark-filter-clear">${esc(t("filterClear"))}</button>
       </div>
     `;
     document.body.appendChild(menu);
@@ -693,7 +807,7 @@
       .join("");
     const title = menu.querySelector(".mr-bookmark-emoji-title");
     if (title) {
-      title.textContent = validIndex ? `選擇 #${validIndex} 的書籤類別` : "選擇書籤類別";
+      title.textContent = validIndex ? t("emojiMenuTitleForIndex", { index: validIndex }) : t("emojiMenuTitle");
     }
   }
 
@@ -758,7 +872,7 @@
     control.setAttribute("data-mr-control", "inline-collapse");
     control.style.cssText = "margin-top:8px;display:flex;justify-content:flex-end;";
     control.innerHTML =
-      '<button class="mr-inline-collapse" type="button" style="font-size:12px;opacity:.85;padding:4px 8px;border:1px solid rgba(128,128,128,.35);border-radius:8px;background:transparent;cursor:pointer;">收合此則</button>';
+      `<button class="mr-inline-collapse" type="button" style="font-size:12px;opacity:.85;padding:4px 8px;border:1px solid rgba(128,128,128,.35);border-radius:8px;background:transparent;cursor:pointer;">${esc(t("inlineCollapseButton"))}</button>`;
     host.appendChild(control);
   }
 
@@ -1395,10 +1509,10 @@
     group.setAttribute(FILTER_GROUP_ATTR, "1");
     group.setAttribute(FILTER_GROUP_ID_ATTR, groupId);
     group.innerHTML = `
-      <div class="mr-group-meta">篩選隱藏（${hosts.length} 則）</div>
-      <div class="mr-group-title">第 ${esc(rangeLabel)} 則未命中篩選書籤類別</div>
+      <div class="mr-group-meta">${esc(t("groupMeta", { count: hosts.length }))}</div>
+      <div class="mr-group-title">${esc(t("groupTitle", { range: rangeLabel }))}</div>
       <div class="mr-group-actions">
-        <button type="button" data-mr-action="filter-group-expand" data-mr-filter-group-id="${groupId}">展開此區段</button>
+        <button type="button" data-mr-action="filter-group-expand" data-mr-filter-group-id="${groupId}">${esc(t("groupExpandButton"))}</button>
       </div>
     `;
     if (!insertGroupBeforeHost(group, first)) return;
@@ -1512,7 +1626,7 @@
     closeBookmarkFilterMenu();
     rerenderBookmarkDecorations();
     startupDone = false;
-    showStatus("收合中", "working");
+    showStatus(t("statusCompacting"), "working");
     scheduleCompact(30);
     scheduleBookmarkFilterApply(60, { resetManualOpen: true });
     return true;
@@ -1547,7 +1661,7 @@
       scheduleCompact(30);
     }
     if (pending > 0 && !startupDone) {
-      showStatus("收合中", "working");
+      showStatus(t("statusCompacting"), "working");
     }
     if (compacted > 0) {
       scheduleFullIndexSync(80);
@@ -1570,7 +1684,7 @@
     if (pending > 0) return;
     if (compactInFlight || compactScheduled || flushScheduled || writeQueue.length > 0) return;
     startupDone = true;
-    showStatus("收合完成", "done");
+    showStatus(t("statusCompactDone"), "done");
     setTimeout(() => {
       hideStatus();
     }, 2200);
@@ -1709,11 +1823,16 @@
       const rawValue = input ? input.value : "";
       const result = addEmojiToCatalog(rawValue);
       if (!result.ok) {
-        showStatus(result.reason === "exists" ? `已存在 emoji ${result.emoji}` : "請輸入有效 emoji", "done");
+        showStatus(
+          result.reason === "exists"
+            ? t("statusEmojiExists", { emoji: result.emoji })
+            : t("statusInvalidEmoji"),
+          "done"
+        );
         return;
       }
       if (input) input.value = "";
-      showStatus(`已新增 emoji ${result.emoji}`, "done");
+      showStatus(t("statusEmojiAdded", { emoji: result.emoji }), "done");
       return;
     }
 
@@ -1759,13 +1878,13 @@
       if (action === "bookmark-collapse-visible") {
         const result = await collapseExpandedMessagesInCurrentView();
         if (result.collapsed > 0 && result.regrouped) {
-          showStatus(`已收合 ${result.collapsed} 則展開訊息，並重建篩選區段`, "done");
+          showStatus(t("statusCollapsedAndRegrouped", { count: result.collapsed }), "done");
         } else if (result.collapsed > 0) {
-          showStatus(`已收合 ${result.collapsed} 則展開訊息`, "done");
+          showStatus(t("statusCollapsedCount", { count: result.collapsed }), "done");
         } else if (result.regrouped) {
-          showStatus("已重建篩選區段", "done");
+          showStatus(t("statusRegrouped"), "done");
         } else {
-          showStatus("目前沒有可收合的展開訊息", "done");
+          showStatus(t("statusNothingToCollapse"), "done");
         }
         return;
       }
@@ -1796,8 +1915,8 @@
       if (e.shiftKey && Number.isInteger(badgeIndex) && badgeIndex > 0) {
         const added = toggleDefaultBookmark(badgeIndex);
         const emoji = getDefaultBookmarkEmoji();
-        if (added === true) showStatus(`已加入 #${badgeIndex} 的 ${emoji} 類別`, "done");
-        if (added === false) showStatus(`已取消 #${badgeIndex} 的 ${emoji} 類別`, "done");
+        if (added === true) showStatus(t("statusBookmarkEnabledForIndex", { index: badgeIndex, emoji }), "done");
+        if (added === false) showStatus(t("statusBookmarkDisabledForIndex", { index: badgeIndex, emoji }), "done");
         return;
       }
       focusMessageTop(host);
@@ -1841,7 +1960,7 @@
       if (!row) {
         loading = true;
         btn.disabled = true;
-        btn.textContent = "載入中...";
+        btn.textContent = t("loading");
         row = await idbGet(id);
       }
       if (!row) return;
@@ -1863,7 +1982,7 @@
     } finally {
       if (loading && document.contains(btn)) {
         btn.disabled = false;
-        btn.textContent = prevLabel || "展開";
+        btn.textContent = prevLabel || t("expand");
       }
     }
   });
@@ -1884,9 +2003,9 @@
       updateBookmarkFilterButtonLabel();
       scheduleBookmarkFilterApply(40, { resetManualOpen: true });
       if (!bookmarkFilterSelected.size) {
-        showStatus("篩選已清空，顯示全部訊息", "done");
+        showStatus(t("filterClearedShowAll"), "done");
       } else {
-        showStatus(`篩選中：${bookmarkFilterSelected.size} 種類別`, "done");
+        showStatus(t("filteringCount", { count: bookmarkFilterSelected.size }), "done");
       }
       return;
     }
@@ -1899,7 +2018,12 @@
       const enabled = Boolean(emojiCheck.checked);
       const changed = setBookmarkEmoji(index, emoji, enabled);
       if (!changed) return;
-      showStatus(enabled ? `#${index} 已加入 ${emoji}` : `#${index} 已取消 ${emoji}`, "done");
+      showStatus(
+        enabled
+          ? t("statusEmojiEnabledForIndex", { index, emoji })
+          : t("statusEmojiDisabledForIndex", { index, emoji }),
+        "done"
+      );
       renderBookmarkEmojiMenu(index);
       return;
     }
@@ -1909,9 +2033,9 @@
     const index = Number(select.value);
     if (!Number.isInteger(index) || index <= 0) return;
     if (jumpToMessageIndex(index)) {
-      showStatus(`已跳轉到 #${index}`, "done");
+      showStatus(t("statusJumpedTo", { index }), "done");
     } else {
-      showStatus(`找不到 #${index}`, "done");
+      showStatus(t("statusNotFound", { index }), "done");
     }
   });
 
@@ -1948,14 +2072,14 @@
 
     const index = Number(String(input.value || "").trim());
     if (!Number.isInteger(index) || index <= 0) {
-      showStatus("請輸入有效編號", "done");
+      showStatus(t("statusInvalidNumber"), "done");
       return;
     }
 
     if (jumpToMessageIndex(index)) {
-      showStatus(`已跳轉到 #${index}`, "done");
+      showStatus(t("statusJumpedTo", { index }), "done");
     } else {
-      showStatus(`找不到 #${index}`, "done");
+      showStatus(t("statusNotFound", { index }), "done");
     }
   });
 
@@ -2027,7 +2151,7 @@
   reconcileBookmarkFilterSelection();
   ensureBookmarkPanel();
   updateBookmarkPanelPosition();
-  showStatus("收合中", "working");
+  showStatus(t("statusCompacting"), "working");
   syncAllMessageIndexLabels();
   ensureButtonsForExpandedMessages();
   runCompact();
