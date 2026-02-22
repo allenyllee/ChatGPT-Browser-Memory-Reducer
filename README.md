@@ -77,7 +77,7 @@ This script stores data locally in your browser only; it does not upload message
   - `mr-bookmark-filter-selection:v1`: selected filter categories
 
 `<route>` is a canonical route key. For conversation pages it uses `c:<conversationId>` (from `/c/<id>`), so query-string changes do not split bookmark sets.
-Legacy bookmark keys are no longer supported and are automatically removed at startup.
+Legacy bookmark keys are no longer supported.
 
 ## Tunable Constants (Advanced)
 

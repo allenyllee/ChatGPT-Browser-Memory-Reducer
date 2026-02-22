@@ -75,7 +75,7 @@
   - `mr-bookmark-filter-selection:v1`：篩選選取狀態
 
 > `<route>` 是 canonical route key。對話頁會使用 `c:<conversationId>`（從 `/c/<id>` 取得），因此 query 參數改變不會把書籤拆成不同集合。
-> 舊版 route key 已不再支援，腳本啟動時會自動清除舊版 key。
+> 舊版 route key 已不再支援。
 
 ## 可調參數（進階）
 

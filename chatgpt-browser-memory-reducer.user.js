@@ -592,24 +592,6 @@
     }
   }
 
-  function clearLegacyBookmarkKeys() {
-    const prefix = "mr-bookmarks:";
-    let removed = 0;
-    for (let i = localStorage.length - 1; i >= 0; i -= 1) {
-      const storageKey = localStorage.key(i);
-      if (!storageKey || !storageKey.startsWith(prefix)) continue;
-      const route = storageKey.slice(prefix.length);
-      if (isCanonicalBookmarkRouteKey(route)) continue;
-      try {
-        localStorage.removeItem(storageKey);
-        removed += 1;
-      } catch (err) {
-        console.warn("[MR] remove legacy bookmark route failed:", storageKey, err);
-      }
-    }
-    return removed;
-  }
-
   function getBookmarkEmojis(index) {
     if (!Number.isInteger(index) || index <= 0) return [];
     const values = bookmarksByIndex[String(index)];
@@ -2291,7 +2273,6 @@
   });
 
   ensureStyles();
-  clearLegacyBookmarkKeys();
   bookmarkEmojiCatalog = loadEmojiCatalog();
   bookmarkFilterSelected = loadBookmarkFilterSelection();
   bookmarksByIndex = loadBookmarks();
