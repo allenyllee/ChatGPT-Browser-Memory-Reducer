@@ -476,7 +476,7 @@
     }
     saveBookmarks();
     rerenderBookmarkDecorations();
-    scheduleBookmarkFilterApply(40, { resetManualOpen: true });
+    scheduleBookmarkFilterApply(40);
     return true;
   }
 
@@ -487,7 +487,7 @@
     delete bookmarksByIndex[key];
     saveBookmarks();
     rerenderBookmarkDecorations();
-    scheduleBookmarkFilterApply(40, { resetManualOpen: true });
+    scheduleBookmarkFilterApply(40);
     return true;
   }
 
@@ -514,7 +514,7 @@
     reconcileBookmarkFilterSelection(previousCatalog);
     renderBookmarkEmojiMenu();
     renderBookmarkFilterMenu();
-    scheduleBookmarkFilterApply(40, { resetManualOpen: true });
+    scheduleBookmarkFilterApply(40);
     return { ok: true, reason: "added", emoji };
   }
 
