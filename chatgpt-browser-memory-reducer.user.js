@@ -569,6 +569,7 @@
         <input id="${BOOKMARK_INPUT_ID}" type="number" min="1" step="1" placeholder="編號">
         <button type="button" data-mr-action="bookmark-add">加入預設</button>
         <select id="${BOOKMARK_SELECT_ID}"></select>
+        <button type="button" data-mr-action="bookmark-filter-toggle">只看書籤</button>
         <button type="button" data-mr-action="bookmark-filter-menu">篩選</button>
         <button type="button" data-mr-action="bookmark-remove">清空類別</button>
         <button type="button" data-mr-action="group-regroup-all">重收合</button>
@@ -584,14 +585,47 @@
     const panel = document.getElementById(BOOKMARK_PANEL_ID);
     if (!panel) return;
     const btn = panel.querySelector('[data-mr-action="bookmark-filter-menu"]');
+    const toggleBtn = panel.querySelector('[data-mr-action="bookmark-filter-toggle"]');
     if (!btn) return;
     if (!isBookmarkFilterActive()) {
+      if (toggleBtn) {
+        toggleBtn.textContent = "只看書籤";
+        toggleBtn.setAttribute("title", "一鍵切換成僅顯示有書籤訊息 + 最後 10 筆");
+      }
       btn.textContent = "篩選: 全部";
       btn.setAttribute("title", "未勾選任何類別，顯示全部訊息");
       return;
     }
+    if (toggleBtn) {
+      toggleBtn.textContent = "顯示全部";
+      toggleBtn.setAttribute("title", "一鍵切換成顯示全部訊息");
+    }
     btn.textContent = `篩選:${bookmarkFilterSelected.size}`;
     btn.setAttribute("title", "僅顯示所選書籤類別與最後 10 筆訊息");
+  }
+
+  function setBookmarkFilterAllSelected(options = {}) {
+    bookmarkFilterSelected = new Set(bookmarkEmojiCatalog);
+    saveBookmarkFilterSelection();
+    renderBookmarkFilterMenu();
+    updateBookmarkFilterButtonLabel();
+    scheduleBookmarkFilterApply(40, { resetManualOpen: true });
+    scheduleSecondaryGrouping(120);
+    if (options.showStatus !== false) {
+      showStatus("已套用：僅顯示所有書籤類別 + 最後 10 筆", "done");
+    }
+  }
+
+  function setBookmarkFilterShowAll(options = {}) {
+    bookmarkFilterSelected = new Set();
+    saveBookmarkFilterSelection();
+    renderBookmarkFilterMenu();
+    updateBookmarkFilterButtonLabel();
+    scheduleBookmarkFilterApply(40, { resetManualOpen: true });
+    scheduleSecondaryGrouping(120);
+    if (options.showStatus !== false) {
+      showStatus("已套用：顯示全部訊息", "done");
+    }
   }
 
   function ensureBookmarkEmojiMenu() {
@@ -1837,13 +1871,7 @@
     if (filterSelectAllBtn) {
       e.preventDefault();
       e.stopPropagation();
-      bookmarkFilterSelected = new Set(bookmarkEmojiCatalog);
-      saveBookmarkFilterSelection();
-      renderBookmarkFilterMenu();
-      updateBookmarkFilterButtonLabel();
-      scheduleBookmarkFilterApply(40, { resetManualOpen: true });
-      scheduleSecondaryGrouping(120);
-      showStatus("已套用：僅顯示所有書籤類別 + 最後 10 筆", "done");
+      setBookmarkFilterAllSelected();
       return;
     }
 
@@ -1851,13 +1879,7 @@
     if (filterClearBtn) {
       e.preventDefault();
       e.stopPropagation();
-      bookmarkFilterSelected = new Set();
-      saveBookmarkFilterSelection();
-      renderBookmarkFilterMenu();
-      updateBookmarkFilterButtonLabel();
-      scheduleBookmarkFilterApply(40, { resetManualOpen: true });
-      scheduleSecondaryGrouping(120);
-      showStatus("已套用：顯示全部訊息", "done");
+      setBookmarkFilterShowAll();
       return;
     }
 
@@ -1903,6 +1925,14 @@
           closeBookmarkFilterMenu();
         } else {
           openBookmarkFilterMenu(e.target.closest('[data-mr-action="bookmark-filter-menu"]'));
+        }
+        return;
+      }
+      if (action === "bookmark-filter-toggle") {
+        if (isBookmarkFilterActive()) {
+          setBookmarkFilterShowAll();
+        } else {
+          setBookmarkFilterAllSelected();
         }
         return;
       }
