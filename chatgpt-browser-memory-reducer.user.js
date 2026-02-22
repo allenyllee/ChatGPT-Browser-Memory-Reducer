@@ -471,47 +471,8 @@
     return out;
   }
 
-  function mergeBookmarkMaps(...maps) {
-    const acc = {};
-    for (const map of maps) {
-      const normalizedMap = normalizeBookmarksByIndex(map);
-      for (const [k, emojisRaw] of Object.entries(normalizedMap)) {
-        const index = Number(k);
-        if (!Number.isInteger(index) || index <= 0) continue;
-        const key = String(index);
-        const current = Array.isArray(acc[key]) ? acc[key] : [];
-        const seen = new Set(current);
-        const next = [...current];
-        for (const item of emojisRaw) {
-          const emoji = normalizeEmojiTag(item);
-          if (!emoji || seen.has(emoji)) continue;
-          seen.add(emoji);
-          next.push(emoji);
-        }
-        if (next.length) {
-          acc[key] = next;
-        }
-      }
-    }
-    const out = {};
-    const keys = Object.keys(acc).map((k) => Number(k)).filter((n) => Number.isInteger(n) && n > 0).sort((a, b) => a - b);
-    for (const key of keys) {
-      out[String(key)] = acc[String(key)];
-    }
-    return out;
-  }
-
-  function canonicalizeStoredRouteKey(rawRouteKey) {
-    const raw = String(rawRouteKey || "").trim();
-    if (!raw) return "";
-    if (/^[cpq]:/.test(raw)) return raw;
-    try {
-      const normalizedPath = raw.startsWith("/") ? raw : `/${raw}`;
-      const url = new URL(normalizedPath, location.origin);
-      return buildRouteKey(url.pathname, url.search);
-    } catch (_err) {
-      return raw;
-    }
+  function isCanonicalBookmarkRouteKey(rawRouteKey) {
+    return /^[cpq]:/.test(String(rawRouteKey || ""));
   }
 
   function mergeUsedEmojisIntoCatalog() {
@@ -631,37 +592,22 @@
     }
   }
 
-  function migrateLegacyBookmarksForCurrentRoute() {
+  function clearLegacyBookmarkKeys() {
     const prefix = "mr-bookmarks:";
-    const currentStorageKey = getBookmarkStorageKey();
-    const current = loadBookmarks();
-    let merged = current;
-    let mergedSources = 0;
-    for (let i = 0; i < localStorage.length; i += 1) {
+    let removed = 0;
+    for (let i = localStorage.length - 1; i >= 0; i -= 1) {
       const storageKey = localStorage.key(i);
       if (!storageKey || !storageKey.startsWith(prefix)) continue;
-      if (storageKey === currentStorageKey) continue;
-      const rawRoute = storageKey.slice(prefix.length);
-      if (canonicalizeStoredRouteKey(rawRoute) !== routeKey) continue;
+      const route = storageKey.slice(prefix.length);
+      if (isCanonicalBookmarkRouteKey(route)) continue;
       try {
-        const raw = localStorage.getItem(storageKey);
-        if (!raw) continue;
-        const candidate = normalizeBookmarksByIndex(JSON.parse(raw));
-        if (!Object.keys(candidate).length) continue;
-        merged = mergeBookmarkMaps(merged, candidate);
-        mergedSources += 1;
+        localStorage.removeItem(storageKey);
+        removed += 1;
       } catch (err) {
-        console.warn("[MR] migrate legacy bookmark route failed:", storageKey, err);
+        console.warn("[MR] remove legacy bookmark route failed:", storageKey, err);
       }
     }
-    if (mergedSources > 0) {
-      try {
-        localStorage.setItem(currentStorageKey, JSON.stringify(merged));
-      } catch (err) {
-        console.warn("[MR] save migrated bookmarks failed:", err);
-      }
-    }
-    return { bookmarks: merged, mergedSources };
+    return removed;
   }
 
   function getBookmarkEmojis(index) {
@@ -789,15 +735,14 @@
     for (let i = 0; i < localStorage.length; i += 1) {
       const key = localStorage.key(i);
       if (!key || !key.startsWith(prefix)) continue;
-      const rawRoute = key.slice(prefix.length);
-      const route = canonicalizeStoredRouteKey(rawRoute);
-      if (!route) continue;
+      const route = key.slice(prefix.length);
+      if (!isCanonicalBookmarkRouteKey(route)) continue;
       try {
         const raw = localStorage.getItem(key);
         if (!raw) continue;
         const normalized = normalizeBookmarksByIndex(JSON.parse(raw));
         if (!Object.keys(normalized).length) continue;
-        out[route] = mergeBookmarkMaps(out[route], normalized);
+        out[route] = normalized;
       } catch (err) {
         console.warn("[MR] read bookmark route failed:", key, err);
       }
@@ -1801,7 +1746,7 @@
     if (nextKey === routeKey) return false;
     clearBookmarkFilterGroups({ dropManualOpen: true });
     routeKey = nextKey;
-    bookmarksByIndex = migrateLegacyBookmarksForCurrentRoute().bookmarks;
+    bookmarksByIndex = loadBookmarks();
     mergeUsedEmojisIntoCatalog();
     closeBookmarkEmojiMenu();
     closeBookmarkFilterMenu();
@@ -2346,9 +2291,10 @@
   });
 
   ensureStyles();
+  clearLegacyBookmarkKeys();
   bookmarkEmojiCatalog = loadEmojiCatalog();
   bookmarkFilterSelected = loadBookmarkFilterSelection();
-  bookmarksByIndex = migrateLegacyBookmarksForCurrentRoute().bookmarks;
+  bookmarksByIndex = loadBookmarks();
   mergeUsedEmojisIntoCatalog();
   reconcileBookmarkFilterSelection();
   ensureBookmarkPanel();
