@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Browser Memory Reducer (Expandable + IndexedDB)
 // @namespace    local.chatgpt.browser.memory.reducer
-// @version      0.9.5
+// @version      0.9.6
 // @description  Compress old ChatGPT messages to reduce browser memory usage and lag, with expandable restore from IndexedDB.
 // @author       allenyllee
 // @license      MIT
