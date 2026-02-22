@@ -35,7 +35,7 @@
 
 可直接安裝連結：
 
-- https://gist.github.com/b1e7051e064b4ad8084efa16edc4fbf8/raw/chatgpt-browser-memory-reducer.user.js
+- https://raw.githubusercontent.com/allenyllee/ChatGPT-Browser-Memory-Reducer/main/chatgpt-browser-memory-reducer.user.js
 
 ## 3) 開啟 ChatGPT
 

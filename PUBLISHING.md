@@ -1,46 +1,24 @@
 # Publishing Workflow
 
-Goal: keep installation simple via Gist Raw, and keep docs/source in this GitHub repo.
+Goal: maintain directly on GitHub and install with one-click GitHub Raw URL.
 
-## Recommended Structure
+## Install URL
 
-1. Keep `chatgpt-browser-memory-reducer.user.js` as the only file in the public install Gist.
-2. Keep README/license/changelog/development files in this repo.
-3. In the userscript header, keep `@downloadURL` and `@updateURL` pointing to the Gist Raw URL.
+- `https://raw.githubusercontent.com/allenyllee/ChatGPT-Browser-Memory-Reducer/main/chatgpt-browser-memory-reducer.user.js`
 
 ## Release Steps
 
-1. Update code in this repo.
-2. Bump `@version` in `chatgpt-browser-memory-reducer.user.js`.
-3. Commit and push repo changes.
-4. Copy the updated script content to the single-file install Gist.
-5. Verify install/update in Tampermonkey or Violentmonkey by opening the Gist Raw URL.
+1. Update `chatgpt-browser-memory-reducer.user.js`.
+2. Bump `@version` in script header.
+3. Keep `@downloadURL` and `@updateURL` pointing to the GitHub Raw URL.
+4. Commit and push to `main`.
+5. Verify update from the Raw URL in Tampermonkey / Violentmonkey.
 
 ## Metadata Checklist
 
 - `@name`
 - `@version`
 - `@license`
-- `@downloadURL` (Gist Raw)
-- `@updateURL` (Gist Raw)
+- `@downloadURL` (GitHub Raw)
+- `@updateURL` (GitHub Raw)
 - `@match`
-
-## Notes
-
-- Gist file order cannot be pinned; single-file Gist avoids that issue.
-- If you need multiple scripts, create one install Gist per script.
-
-## Optional: Auto Publish via GitHub Actions
-
-This repo includes `.github/workflows/publish-gist.yml`.
-
-Set these repository secrets before enabling auto publish:
-
-- `GIST_TOKEN`: GitHub Personal Access Token (classic) with `gist` scope
-- `GIST_ID`: target gist ID
-- `GIST_FILE`: target filename inside the gist (for example `chatgpt-browser-memory-reducer.user.js`)
-
-Trigger behavior:
-
-- Auto runs on push to `main` when `chatgpt-browser-memory-reducer.user.js` changes
-- Can also run manually via `workflow_dispatch`
