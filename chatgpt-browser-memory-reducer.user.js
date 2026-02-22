@@ -1958,6 +1958,28 @@
     }
   });
 
+  document.addEventListener(
+    "wheel",
+    (e) => {
+      const input = e.target.closest(`#${BOOKMARK_INPUT_ID}`);
+      if (!input) return;
+      e.preventDefault();
+      e.stopPropagation();
+
+      const direction = e.deltaY > 0 ? 1 : e.deltaY < 0 ? -1 : 0;
+      if (!direction) return;
+
+      const currentValue = Number(String(input.value || "").trim());
+      const base = Number.isInteger(currentValue) && currentValue > 0 ? currentValue : 1;
+      const next = Math.max(1, base + direction);
+      if (next === base) return;
+
+      input.value = String(next);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    },
+    { passive: false }
+  );
+
   const observer = new MutationObserver((records) => {
     const routeChanged = checkRouteChange();
     const streaming = isStreamingNow();
