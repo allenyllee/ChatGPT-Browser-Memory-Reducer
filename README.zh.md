@@ -33,6 +33,10 @@
 
 將 `chatgpt-browser-memory-reducer.user.js` 匯入腳本管理器，或使用腳本內 `@downloadURL` 安裝。
 
+可直接安裝連結：
+
+- https://gist.github.com/b1e7051e064b4ad8084efa16edc4fbf8/raw/chatgpt-browser-memory-reducer.user.js
+
 ## 3) 開啟 ChatGPT
 
 支援：

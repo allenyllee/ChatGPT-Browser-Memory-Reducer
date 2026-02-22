@@ -33,6 +33,10 @@ Use one of the following:
 
 Import `chatgpt-browser-memory-reducer.user.js` into your userscript manager, or install via the script `@downloadURL`.
 
+Direct install URL:
+
+- https://gist.github.com/b1e7051e064b4ad8084efa16edc4fbf8/raw/chatgpt-browser-memory-reducer.user.js
+
 ## 3) Open ChatGPT
 
 Supported matches:
